@@ -228,7 +228,7 @@
 
 4. Energy Statistics (/api/v1/inverter/energy)
 
-## 4.1 Get Total Generated Energy 🔘 In Progress
+## 4.1 Get Total Generated Energy ✅ Complete
 - Legacy Command: ET
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/energy/total
@@ -264,7 +264,7 @@
     "unit": "kWh"
   }
 
-## 4.4 Get Daily Energy 🔘 In Progress
+## 4.4 Get Daily Energy ✅ Complete
 - Legacy Command: ED
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/energy/daily/{date}

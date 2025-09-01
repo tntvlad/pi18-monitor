@@ -504,17 +504,36 @@ def get_total_energy():
     """Get total generated energy"""
     monitor = get_monitor()
     result, error = monitor.send_p18_command('ET')
+    
+    if error:
+        return jsonify({'error': f'Command error: {error}'}), 500
+        
     if result:
         # Parse total energy
-        # Format: ^D011NNNNNNNN
-        match = re.search(r'^D\d{3}(\d+)', result)
+        # Format: ^DXXXNNNNNNN where XXX is the data length
+        # Example: "^D01102358029"
+        
+        # Remove any non-alphanumeric characters that might be in the response
+        result = re.sub(r'[^a-zA-Z0-9]', '', result)
+        
+        # Match D followed by 3 digits (data length), then capture all remaining digits
+        match = re.search(r'D\d{3}(\d+)', result)
         if match:
-            energy = int(match.group(1))
-            return jsonify({
-                "total_energy_kwh": energy,
-                "unit": "kWh"
-            })
-    return jsonify({'error': 'Failed to get total energy'}), 500
+            try:
+                energy_wh = int(match.group(1))
+                # Convert from Wh to kWh
+                energy_kwh = energy_wh / 1000
+                
+                return jsonify({
+                    "total_energy_kwh": energy_kwh,
+                    "unit": "kWh"
+                })
+            except ValueError:
+                return jsonify({'error': f'Invalid energy value format: {match.group(1)}'}), 500
+        else:
+            return jsonify({'error': f'Invalid response format: {result}'}), 500
+    
+    return jsonify({'error': 'No response from inverter'}), 500
 
 @api_bp.route('/api/v1/inverter/energy/yearly/<int:year>')
 def get_yearly_energy(year):
@@ -574,18 +593,33 @@ def get_daily_energy(date):
         command = f"ED{year:04d}{month:02d}{day:02d}"
         result, error = monitor.send_p18_command(command)
         
+        if error:
+            return jsonify({'error': f'Command error: {error}'}), 500
+        
         if result:
+            # Clean the response by removing any non-alphanumeric characters
+            result = re.sub(r'[^a-zA-Z0-9]', '', result)
+            
             # Parse daily energy
-            # Format: ^DXXXYYYYMMDD:NNNNNNNN
-            match = re.search(r'^D\d{3}(\d{4})(\d{2})(\d{2}):(\d+)', result)
+            # Format: D01NNNNNNNN according to protocol documentation
+            match = re.search(r'D\d{3}(\d+)', result)
             if match:
-                energy = int(match.group(4))
+                try:
+                    energy_wh = int(match.group(1))
+                    # Convert to kWh for consistency with the total energy endpoint
+                    energy_kwh = energy_wh / 1000
+                    
+                    return jsonify({
+                        "date": date,
+                        "energy_wh": energy_wh,
+                        "energy_kwh": energy_kwh,
+                        "unit": "Wh"
+                    })
+                except ValueError:
+                    return jsonify({'error': f'Invalid energy value format: {match.group(1)}'}), 500
+            else:
+                return jsonify({'error': f'Invalid response format: {result}'}), 500
                 
-                return jsonify({
-                    "date": date,
-                    "energy_wh": energy,
-                    "unit": "Wh"
-                })
         return jsonify({'error': 'Failed to get daily energy data'}), 500
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
