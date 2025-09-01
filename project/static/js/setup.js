@@ -6,11 +6,18 @@ document.addEventListener('DOMContentLoaded', function() {
     const serialPortsContainer = document.getElementById('serial-ports');
     const portInput = document.getElementById('port');
     
+    // Simple spinner HTML
+    const spinnerHtml = '<img src="/static/img/simple-spinner.svg" alt="Loading..." class="simple-spinner">';
+    
     // Test connection to the inverter
     testButton.addEventListener('click', function() {
-        // Show loading state
-        testResult.className = 'test-result loading';
-        testResult.innerHTML = '<div class="loading"></div> Testing connection...';
+        // Show loading state on the button only
+        const originalButtonText = testButton.textContent;
+        testButton.disabled = true;
+        testButton.innerHTML = spinnerHtml + ' Testing...';
+        
+        // Clear previous test results
+        testResult.innerHTML = '';
         
         // Get current port value from input
         const port = portInput.value;
@@ -25,6 +32,11 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(response => response.json())
         .then(data => {
+            // Restore button
+            testButton.disabled = false;
+            testButton.innerHTML = originalButtonText;
+            
+            // Show result
             if (data.success) {
                 testResult.className = 'test-result success';
                 testResult.innerHTML = `
@@ -42,6 +54,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         })
         .catch(error => {
+            // Restore button
+            testButton.disabled = false;
+            testButton.innerHTML = originalButtonText;
+            
+            // Show error
             testResult.className = 'test-result error';
             testResult.innerHTML = `
                 <p><strong>Connection test error</strong></p>
@@ -53,7 +70,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Fetch available serial ports
     function fetchAvailablePorts() {
-        serialPortsContainer.innerHTML = '<div class="loading"></div> Scanning for available ports...';
+        // Show loading state
+        serialPortsContainer.innerHTML = spinnerHtml + ' Scanning for available ports...';
         
         fetch('/api/v1/system/ports')
             .then(response => response.json())
@@ -102,6 +120,18 @@ document.addEventListener('DOMContentLoaded', function() {
     refreshButton.className = 'btn secondary';
     refreshButton.textContent = 'Refresh Ports';
     refreshButton.style.marginTop = '1rem';
-    refreshButton.addEventListener('click', fetchAvailablePorts);
+    refreshButton.addEventListener('click', function() {
+        const originalButtonText = refreshButton.textContent;
+        refreshButton.disabled = true;
+        refreshButton.innerHTML = spinnerHtml + ' Refreshing...';
+        
+        fetchAvailablePorts();
+        
+        // Re-enable after a short delay
+        setTimeout(function() {
+            refreshButton.disabled = false;
+            refreshButton.innerHTML = originalButtonText;
+        }, 1000);
+    });
     serialPortsContainer.parentNode.appendChild(refreshButton);
 });

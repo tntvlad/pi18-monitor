@@ -140,14 +140,6 @@ h3 {
     color: #c0392b;
 }
 
-.test-result.loading {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background-color: rgba(52, 152, 219, 0.1);
-    color: var(--accent-color);
-}
-
 .serial-ports {
     margin-top: 1rem;
 }
@@ -168,4 +160,14 @@ h3 {
 .port-item.selected {
     background-color: rgba(52, 152, 219, 0.1);
     border-left: 4px solid var(--accent-color);
+}
+
+/* Simple spinner styling */
+.simple-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    vertical-align: middle;
+    margin-right: 8px;
+    margin-top: -2px;
 }
