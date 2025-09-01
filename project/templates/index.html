@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P18 Inverter Monitor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <meta http-equiv="refresh" content="300">
+</head>
+<body>
+    <header>
+        <h1>P18 Inverter Monitor</h1>
+        <div class="system-info">
+            <span id="connection-status">Checking connection...</span>
+            <a href="/setup" class="setup-link">Setup</a>
+        </div>
+    </header>
+    
+    <main>
+        <div class="dashboard-grid">
+            <section id="status" class="dashboard-card">
+                <h2>Inverter Status</h2>
+                <div id="status-display" class="data-container">Loading...</div>
+            </section>
+            
+            <section id="power-data" class="dashboard-card">
+                <h2>Power Generation</h2>
+                <div id="power-display" class="data-container">Loading...</div>
+            </section>
+            
+            <section id="battery" class="dashboard-card">
+                <h2>Battery Status</h2>
+                <div id="battery-display" class="data-container">Loading...</div>
+            </section>
+            
+            <section id="energy" class="dashboard-card">
+                <h2>Energy Statistics</h2>
+                <div id="energy-display" class="data-container">Loading...</div>
+            </section>
+            
+            <section id="error-logs" class="dashboard-card full-width">
+                <h2>Error Logs</h2>
+                <div id="errors-display" class="data-container">Loading...</div>
+            </section>
+        </div>
+    </main>
+    
+    <footer>
+        <p>P18 Inverter Monitoring System &copy; 2023</p>
+        <p><small>Version 1.0.0</small></p>
+    </footer>
+    
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

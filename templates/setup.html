@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>P18 Inverter Setup</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .card { 
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px;
+        }
+        .setup-form {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        select, button {
+            padding: 8px;
+            margin: 5px 0;
+            width: 100%;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="setup-form">
+        <h1>P18 Inverter Setup</h1>
+        
+        <div class="card">
+            <h3>Serial Port Selection</h3>
+            <form id="portForm">
+                <select id="portSelect">
+                    <option value="">Select a port...</option>
+                    {% for port in ports %}
+                    <option value="{{ port }}" {% if port == current_port %}selected{% endif %}>{{ port }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Save</button>
+            </form>
+            <div id="status"></div>
+            <p><a href="/">Go to Monitor</a></p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('portForm').onsubmit = function(e) {
+            e.preventDefault();
+            const port = document.getElementById('portSelect').value;
+            if (!port) {
+                showStatus('Please select a port', 'error');
+                return;
+            }
+
+            fetch('/api/set_port', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ port: port })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    showStatus(data.error, 'error');
+                } else {
+                    showStatus('Port updated successfully!', 'success');
+                    setTimeout(() => window.location.href = '/', 1500);
+                }
+            })
+            .catch(error => showStatus('Error updating port', 'error'));
+        };
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.className = 'status ' + type;
+            status.textContent = message;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>P18 Inverter Monitor</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .card { 
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px;
+        }
+        .good { color: green; }
+        .warning { color: orange; }
+        .error { color: red; }
+        .command-section { margin-top: 20px; }
+        button { 
+            padding: 5px 10px; 
+            margin-right: 5px;
+        }
+        input[type="text"] {
+            padding: 5px;
+            margin-right: 5px;
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>P18 Inverter Monitor</h1>
+    
+    <div class="card">
+        <h2>System Status</h2>
+        <p>Working Mode: <span id="working_mode">--</span></p>
+        <p>Protocol ID: <span id="protocol_id">--</span></p>
+        <p>Last Update: <span id="last_update">--</span></p>
+    </div>
+
+    <div class="card">
+        <h2>Power Status</h2>
+        <p>AC Output: <span id="ac_out_voltage">--</span>V / <span id="ac_out_frequency">--</span>Hz</p>
+        <p>Active Power: <span id="ac_active_power">--</span>W</p>
+        <p>Load: <span id="load_percent">--</span>%</p>
+    </div>
+
+    <div class="card">
+        <h2>Battery Status</h2>
+        <p>Voltage: <span id="battery_voltage">--</span>V</p>
+        <p>Capacity: <span id="battery_capacity">--</span>%</p>
+        <p>Charge Current: <span id="battery_charge_current">--</span>A</p>
+        <p>Discharge Current: <span id="battery_discharge_current">--</span>A</p>
+    </div>
+
+    <div class="card">
+        <h2>Solar Status</h2>
+        <p>PV1: <span id="pv1_power">--</span>W (<span id="pv1_voltage">--</span>V)</p>
+        <p>PV2: <span id="pv2_power">--</span>W (<span id="pv2_voltage">--</span>V)</p>
+        <p>MPPT1: <span id="mppt1_status">--</span></p>
+        <p>MPPT2: <span id="mppt2_status">--</span></p>
+    </div>
+
+    <div class="card command-section">
+        <h2>Commands</h2>
+        <div>
+            <button onclick="sendCommand('T')">Get Time</button>
+            <button onclick="setCurrentTime()">Set Time</button>
+            <button onclick="sendCommand('MOD')">Get Mode</button>
+            <button onclick="sendCommand('GS')">Get Status</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <label for="customCommand">Custom command:</label>
+            <input type="text" id="customCommand" placeholder="Enter command">
+            <button onclick="sendCustomCommand()">Send</button>
+        </div>
+        <p>Response: <span id="commandResponse">--</span></p>
+        <p><a href="/setup">Settings</a></p>
+    </div>
+
+    <script>
+        // Update data every 5 seconds
+        setInterval(updateData, 5000);
+        updateData();  // Initial update
+
+        async function updateData() {
+            try {
+                const response = await fetch('/api/v1/inverter/data');
+                const data = await response.json();
+                
+                // Update all spans with their corresponding values
+                for (const [key, value] of Object.entries(data)) {
+                    const element = document.getElementById(key);
+                    if (element) {
+                        if (typeof value === 'number') {
+                            element.textContent = value.toFixed(1);
+                        } else {
+                            element.textContent = value;
+                        }
+                    }
+                }
+
+                // Get protocol ID if not present
+                if (!document.getElementById('protocol_id').textContent || 
+                    document.getElementById('protocol_id').textContent === '--') {
+                    const protocolResponse = await fetch('/api/v1/inverter/info/protocol');
+                    const protocolData = await protocolResponse.json();
+                    if (protocolData.protocol_id) {
+                        document.getElementById('protocol_id').textContent = protocolData.protocol_id;
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating data:', error);
+            }
+        }
+
+        async function sendCommand(cmd) {
+            try {
+                const response = await fetch('/api/command/' + cmd);
+                const data = await response.json();
+                
+                const output = document.getElementById('commandResponse');
+                if (data.error) {
+                    output.textContent = 'Error: ' + data.error;
+                    output.className = 'error';
+                } else {
+                    output.textContent = 'Response: ' + data.response;
+                    output.className = 'good';
+                }
+            } catch (error) {
+                const output = document.getElementById('commandResponse');
+                output.textContent = 'Error sending command: ' + error;
+                output.className = 'error';
+            }
+        }
+
+        function sendCustomCommand() {
+            const cmd = document.getElementById('customCommand').value;
+            if (cmd) {
+                sendCommand(cmd);
+            }
+        }
+
+        function setCurrentTime() {
+            const now = new Date();
+            const timeString = now.getFullYear().toString().slice(-2) +
+                             (now.getMonth() + 1).toString().padStart(2, '0') +
+                             now.getDate().toString().padStart(2, '0') +
+                             now.getHours().toString().padStart(2, '0') +
+                             now.getMinutes().toString().padStart(2, '0') +
+                             now.getSeconds().toString().padStart(2, '0');
+            
+            fetch('/api/set_time', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ timestr: timeString })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('commandResponse').textContent = 
+                    data.response || data.error || 'No response';
+            });
+        }
+
+        // Update every 5 seconds
+        setInterval(updateData, 5000);
+        updateData();  // Initial update
+    </script>
+</body>
+</html>
