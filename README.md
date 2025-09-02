@@ -46,23 +46,85 @@ This project provides a simple yet powerful web interface for monitoring and con
 
 ### Setup
 
+There are two ways to set up the P18 Inverter Monitor:
+
+#### Option 1: Using the Installation Script (Recommended)
+
 1. Clone this repository:
-   ```
+   ```bash
    git clone https://github.com/tntvlad/p18-inverter-monitor.git
    cd p18-inverter-monitor
    ```
 
-2. Install required dependencies:
-   ```
-   pip install -r requirements.txt
+2. Make the installation script executable:
+   ```bash
+   chmod +x install.sh
    ```
 
-3. Run the application:
+3. Run the installation script:
+   ```bash
+   ./install.sh
    ```
+
+The script will:
+- Check for Python 3.7+ requirement
+- Create and configure a Python virtual environment
+- Install all required dependencies
+- Add your user to the dialout group for serial port access
+- Create a default configuration file
+- Set up startup scripts for both development and production
+- Create a systemd service file for running as a system service
+
+To start the application, you have several options:
+
+- Development mode:
+  ```bash
+  ./dev.sh
+  ```
+
+- Production mode with Flask:
+  ```bash
+  ./start.sh flask
+  ```
+
+- Production mode with Gunicorn (recommended):
+  ```bash
+  ./start.sh gunicorn
+  ```
+
+To run as a system service:
+```bash
+sudo cp p18-inverter-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable p18-inverter-api.service
+sudo systemctl start p18-inverter-api.service
+```
+
+#### Option 2: Manual Setup
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/tntvlad/p18-inverter-monitor.git
+   cd p18-inverter-monitor
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install required dependencies:
+   ```bash
+   pip install -r project/requirements.txt
+   ```
+
+4. Run the application:
+   ```bash
    python -m project.app
    ```
 
-4. Open your web browser and navigate to:
+5. Open your web browser and navigate to:
    ```
    http://localhost:5000
    ```
