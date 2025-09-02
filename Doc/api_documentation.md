@@ -337,7 +337,7 @@
   }
   ```
 
-## 4.2 Get Yearly Energy 🔘 In Progress
+## 4.2 Get Yearly Energy ✅ Complete
 - Legacy Command: EY
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/energy/yearly/{year}
@@ -352,7 +352,7 @@
   }
   ```
 
-## 4.3 Get Monthly Energy 🔘 In Progress
+## 4.3 Get Monthly Energy ✅ Complete
 - Legacy Command: EM
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/energy/monthly/{year}/{month}
@@ -383,7 +383,7 @@
   }
   ```
 
-## 4.5 Clear Energy Data 🔘 In Progress
+## 4.5 Clear Energy Data ✅ Complete
 - Legacy Command: CLE
 - HTTP Method: DELETE
 - Endpoint: /api/v1/inverter/energy/clear

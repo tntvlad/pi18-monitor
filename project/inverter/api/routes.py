@@ -541,20 +541,34 @@ def get_yearly_energy(year):
     monitor = get_monitor()
     command = f"EY{year}"
     result, error = monitor.send_p18_command(command)
+    
+    if error:
+        return jsonify({'error': f'Command error: {error}'}), 500
+        
     if result:
+        # Clean the response by removing any non-alphanumeric characters
+        result = re.sub(r'[^a-zA-Z0-9]', '', result)
+        
         # Parse yearly energy
-        # Format: ^DXXXYYYY:NNNNNNNN
-        match = re.search(r'^D\d{3}(\d{4}):(\d+)', result)
+        # Format: ^D011NNNNNNNN<CRC><cr> where NNNNNNNN is the energy in Wh
+        match = re.search(r'D011(\d+)', result)
         if match:
-            year_from_response = match.group(1)
-            energy = int(match.group(2))
-            
-            return jsonify({
-                "year": int(year_from_response),
-                "energy_kwh": energy,
-                "unit": "kWh"
-            })
-    return jsonify({'error': 'Failed to get yearly energy data'}), 500
+            try:
+                energy_wh = int(match.group(1))
+                # Convert from Wh to kWh with decimal precision
+                energy_kwh = energy_wh / 1000
+                
+                return jsonify({
+                    "energy_kwh": energy_kwh,
+                    "unit": "kWh",
+                    "year": year
+                })
+            except ValueError:
+                return jsonify({'error': f'Invalid energy value format: {match.group(1)}'}), 500
+        else:
+            return jsonify({'error': f'Invalid response format: {result}'}), 500
+    
+    return jsonify({'error': 'No response from inverter'}), 500
 
 @api_bp.route('/api/v1/inverter/energy/monthly/<int:year>/<int:month>')
 def get_monthly_energy(year, month):
@@ -562,22 +576,33 @@ def get_monthly_energy(year, month):
     monitor = get_monitor()
     command = f"EM{year:04d}{month:02d}"
     result, error = monitor.send_p18_command(command)
+    
+    if error:
+        return jsonify({'error': f'Command error: {error}'}), 500
+        
     if result:
+        # Clean the response by removing any non-alphanumeric characters
+        result = re.sub(r'[^a-zA-Z0-9]', '', result)
+        
         # Parse monthly energy
-        # Format: ^DXXXYYYYMM:NNNNNNNN
-        match = re.search(r'^D\d{3}(\d{4})(\d{2}):(\d+)', result)
+        # Format: ^D011NNNNNNNN<CRC><cr> where NNNNNNNN is the energy in kWh
+        match = re.search(r'D011(\d+)', result)
         if match:
-            year_from_response = match.group(1)
-            month_from_response = match.group(2)
-            energy = int(match.group(3))
-            
-            return jsonify({
-                "year": int(year_from_response),
-                "month": int(month_from_response),
-                "energy_kwh": energy,
-                "unit": "kWh"
-            })
-    return jsonify({'error': 'Failed to get monthly energy data'}), 500
+            try:
+                energy_kwh = int(match.group(1))
+                
+                return jsonify({
+                    "energy_kwh": energy_kwh,
+                    "unit": "kWh",
+                    "year": year,
+                    "month": month
+                })
+            except ValueError:
+                return jsonify({'error': f'Invalid energy value format: {match.group(1)}'}), 500
+        else:
+            return jsonify({'error': f'Invalid response format: {result}'}), 500
+    
+    return jsonify({'error': 'No response from inverter'}), 500
 
 @api_bp.route('/api/v1/inverter/energy/daily/<string:date>')
 def get_daily_energy(date):
@@ -628,17 +653,45 @@ def get_daily_energy(date):
 def clear_energy_data():
     """Clear energy data"""
     monitor = get_monitor()
-    command = "CLE"
-    # This is a special command that might need different handling
-    result, error = monitor.send_p18_command(command)
     
-    if result and "ACK" in result:
-        return jsonify({
-            "status": "success",
-            "message": "All energy data cleared"
-        })
-    
-    return jsonify({'error': 'Failed to clear energy data'}), 500
+    try:
+        # The clear energy command needs special handling because it starts with S not P
+        cmd = "^S006CLE\r"
+        
+        # Send directly without using send_p18_command since this is an S command not P command
+        if not monitor.ser or not monitor.ser.is_open:
+            if not monitor.connect():
+                return jsonify({'error': 'Could not connect to inverter'}), 500
+        
+        monitor.ser.reset_input_buffer()
+        monitor.ser.reset_output_buffer()
+        monitor.ser.write(cmd.encode('ascii'))
+        monitor.ser.flush()
+        
+        # Read response
+        response = ""
+        while True:
+            char = monitor.ser.read(1)
+            if not char:
+                break
+            response += char.decode('ascii', errors='ignore')
+            if response.endswith('\r'):
+                break
+            if len(response) > 100:
+                break
+        
+        if response:
+            # Check if the response starts with ^1 which indicates command acceptance
+            if response.startswith('^1'):
+                return jsonify({
+                    "status": "success",
+                    "message": "All energy data cleared"
+                })
+            else:
+                return jsonify({'error': f'Command refused: {response}'}), 400
+        return jsonify({'error': 'No response from inverter'}), 504
+    except Exception as e:
+        return jsonify({'error': f'Error clearing energy data: {str(e)}'}), 500
 
 # =========================================================================
 # Settings Management Endpoints (/api/v1/inverter/settings)
