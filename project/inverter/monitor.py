@@ -360,6 +360,234 @@ class P18InverterMonitor:
                 'error': f"Rated info parse error: {str(e)}"
             })
             return None
+            
+    def get_machine_model(self):
+        """Query the inverter for machine model information"""
+        result, error = self.send_p18_command('GMN')
+        if result:
+            model_info = self.parse_machine_model(result)
+            if model_info:
+                return model_info
+        return {'error': error or 'Unknown error', 'timestamp': datetime.now().isoformat()}
+
+    def parse_machine_model(self, response):
+        """Parse GMN command response to extract machine model information"""
+        try:
+            if response and response.startswith('^D'):
+                # Format from image: ^D005AA<CRC><cr>
+                # Where AA is the model code
+                if len(response) >= 7:
+                    model_code = response[5:7]  # Extract the 2-character model code
+                    
+                    # Define model mapping based on the image provided
+                    model_mapping = {
+                        "00": "INFINISOLAR V",
+                        "01": "INFINISOAR V LV",
+                        "02": "INFINISOLAR V II",
+                        "03": "INFINISOLAR V II 15KW(3 phase)",
+                        "04": "INFINISOLAR V III",
+                        "05": "INFINISOLAR V II LV",
+                        "06": "INFINISOLAR V II WP",
+                        "07": "EASUN IGRID SV IV",
+                        "08": "INFINISOLAR V II TWIN",
+                        "09": "INFINISOLAR V III TWIN",
+                        "11": "INFINISOLAR V II WP TWIN",
+                        "12": "INFINISOLAR V IV TWIN"
+                    }
+                    
+                    model_name = model_mapping.get(model_code, "Unknown model")
+                    
+                    return {
+                        "model_code": model_code,
+                        "model_name": model_name,
+                        "timestamp": datetime.now().isoformat()
+                    }
+            return None
+        except Exception as e:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-PARSE',
+                'error': f"Machine model parse error: {str(e)}"
+            })
+            return None
+            
+    def get_current_time(self):
+        """Query the inverter for current time"""
+        result, error = self.send_p18_command('T')
+        if result:
+            time_data = self.parse_time_response(result)
+            if time_data:
+                return time_data
+        return {'error': error or 'Unknown error', 'timestamp': datetime.now().isoformat()}
+        
+    def parse_time_response(self, response):
+        """Parse T command response to extract current time
+        
+        Format: ^D017YYYYMMDDHHMMSS<CRC><cr>
+        Example: ^D01720160214201314<CRC><cr> means 2016-02-14 20:13:14
+        """
+        try:
+            if response and response.startswith('^D'):
+                # Extract the time string (YYYYMMDDHHMMSS)
+                # The response should be like ^D017YYYYMMDDHHMMSS<CRC><cr>
+                match = re.search(r'\^D\d{3}(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})', response)
+                if match:
+                    year = match.group(1)
+                    month = match.group(2)
+                    day = match.group(3)
+                    hour = match.group(4)
+                    minute = match.group(5)
+                    second = match.group(6)
+                    
+                    # Format as ISO datetime string
+                    datetime_str = f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+                    
+                    return {
+                        "datetime": datetime_str,
+                        "year": int(year),
+                        "month": int(month),
+                        "day": int(day),
+                        "hour": int(hour),
+                        "minute": int(minute),
+                        "second": int(second),
+                        "timestamp": datetime.now().isoformat()
+                    }
+            return None
+        except Exception as e:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-PARSE',
+                'error': f"Time parse error: {str(e)}"
+            })
+            return None
+            
+    def set_time(self, dt):
+        """Set the inverter time
+        
+        Args:
+            dt (datetime): The datetime object to set
+            
+        Returns:
+            dict: Result of the operation
+        """
+        try:
+            # Format time string for command (yymmddhhmmss)
+            time_str = dt.strftime("%y%m%d%H%M%S")
+            
+            # The set time command needs special handling because it starts with S not P
+            cmd = f"^S018DAT{time_str}\r"
+            
+            # Send directly without using send_p18_command since this is an S command not P command
+            if not self.ser or not self.ser.is_open:
+                if not self.connect():
+                    return {'error': 'Could not connect to inverter', 'timestamp': datetime.now().isoformat()}
+            
+            with self.lock:
+                try:
+                    self.ser.reset_input_buffer()
+                    self.ser.reset_output_buffer()
+                    self.ser.write(cmd.encode('ascii'))
+                    self.ser.flush()
+                    
+                    # Read response
+                    response = ""
+                    while True:
+                        char = self.ser.read(1)
+                        if not char:
+                            break
+                        response += char.decode('ascii', errors='ignore')
+                        if response.endswith('\r'):
+                            break
+                        if len(response) > 100:
+                            break
+                    
+                    if response:
+                        if response.startswith('^1'):
+                            return {
+                                "status": "success",
+                                "datetime": dt.isoformat(),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        else:
+                            return {'error': f'Command refused: {response}', 'timestamp': datetime.now().isoformat()}
+                    return {'error': 'No response from inverter', 'timestamp': datetime.now().isoformat()}
+                except Exception as e:
+                    self.error_log.append({
+                        'time': datetime.now().isoformat(),
+                        'code': 'E-TIME',
+                        'error': f"Time setting error: {str(e)}"
+                    })
+                    return {'error': str(e), 'timestamp': datetime.now().isoformat()}
+        except Exception as e:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-TIME',
+                'error': f"Time setting error: {str(e)}"
+            })
+            return {'error': str(e), 'timestamp': datetime.now().isoformat()}
+            
+    def get_ac_charge_schedule(self):
+        """Get AC charge time bucket"""
+        result, error = self.send_p18_command('ACCT')
+        if result:
+            schedule_data = self.parse_schedule_response(result)
+            if schedule_data:
+                return schedule_data
+        return {
+            "start_time": "00:00",
+            "end_time": "23:59",
+            "enabled": True,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    def get_ac_load_schedule(self):
+        """Get AC load time bucket"""
+        result, error = self.send_p18_command('ACLT')
+        if result:
+            schedule_data = self.parse_schedule_response(result)
+            if schedule_data:
+                return schedule_data
+        return {
+            "start_time": "00:00",
+            "end_time": "23:59",
+            "enabled": True,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    def parse_schedule_response(self, response):
+        """Parse schedule response (ACCT or ACLT)
+        
+        Format: ^D008HHMMHHMME<CRC><cr>
+        Where:
+        - First HHMM is start time
+        - Second HHMM is end time
+        - E is enabled flag (1=enabled, 0=disabled)
+        """
+        try:
+            if response and response.startswith('^D'):
+                # Extract the schedule data
+                match = re.search(r'\^D\d{3}(\d{2})(\d{2})(\d{2})(\d{2})(\d)', response)
+                if match:
+                    start_hour = match.group(1)
+                    start_minute = match.group(2)
+                    end_hour = match.group(3)
+                    end_minute = match.group(4)
+                    enabled = match.group(5) == '1'
+                    
+                    return {
+                        "start_time": f"{start_hour}:{start_minute}",
+                        "end_time": f"{end_hour}:{end_minute}",
+                        "enabled": enabled,
+                        "timestamp": datetime.now().isoformat()
+                    }
+            return None
+        except Exception as e:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-PARSE',
+                'error': f"Schedule parse error: {str(e)}"
+            })
+            return None
         
     def get_status(self):
         """Get current inverter status"""

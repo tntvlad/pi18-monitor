@@ -15,6 +15,7 @@ This project provides a simple yet powerful web interface for monitoring and con
   - Power output and load information
   - Battery status (voltage, charge/discharge current, capacity)
   - Solar panel performance (PV voltage, power, MPPT status)
+  - Machine model and hardware information
 
 - **Command Interface**: Send commands directly to your inverter:
   - Get/set system time
@@ -135,6 +136,7 @@ sudo systemctl start p18-inverter-api.service
 
 The web interface provides several cards for monitoring different aspects of your inverter:
 
+- **System Information**: View machine model, serial number, and firmware versions
 - **Inverter Status**: View working mode and general status
 - **Power Generation**: Monitor PV input and output power
 - **Battery Status**: Check battery voltage, capacity, and charge/discharge current
@@ -161,6 +163,7 @@ The application provides a comprehensive RESTful API for integration with other 
 - `GET /api/v1/inverter/info/protocol` - Get protocol ID
 - `GET /api/v1/inverter/info/serial` - Get serial number
 - `GET /api/v1/inverter/info/firmware` - Get firmware version
+- `GET /api/v1/inverter/info/model` - Get machine model
 - `GET /api/v1/inverter/info/ratings` - Get rated information
 
 #### Real-time Data

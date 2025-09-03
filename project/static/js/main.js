@@ -3,6 +3,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Elements to update
     const connectionStatus = document.getElementById('connection-status');
+    const systemInfoDisplay = document.getElementById('system-info-display');
     const statusDisplay = document.getElementById('status-display');
     const powerDisplay = document.getElementById('power-display');
     const batteryDisplay = document.getElementById('battery-display');
@@ -22,6 +23,84 @@ document.addEventListener('DOMContentLoaded', function() {
         element.innerHTML = `<p class="error">Error: ${message}</p>`;
     }
     
+    // Fetch system information (model, serial, firmware)
+    function fetchSystemInfo() {
+        showLoading(systemInfoDisplay);
+        
+        // Fetch model info
+        fetch(`${API_BASE}/info/model`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(modelData => {
+                // Fetch serial number
+                return fetch(`${API_BASE}/info/serial`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! Status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(serialData => {
+                        // Fetch firmware version
+                        return fetch(`${API_BASE}/info/firmware`)
+                            .then(response => {
+                                if (!response.ok) {
+                                    throw new Error(`HTTP error! Status: ${response.status}`);
+                                }
+                                return response.json();
+                            })
+                            .then(firmwareData => {
+                                return {
+                                    model: modelData,
+                                    serial: serialData,
+                                    firmware: firmwareData
+                                };
+                            });
+                    });
+            })
+            .then(data => {
+                let systemInfoHTML = `
+                    <div class="data-grid">
+                        <div class="data-item">
+                            <strong>Machine Model</strong>
+                            ${data.model.model_name}
+                        </div>
+                        <div class="data-item">
+                            <strong>Model Code</strong>
+                            ${data.model.model_code}
+                        </div>
+                        <div class="data-item">
+                            <strong>Serial Number</strong>
+                            ${data.serial.serial_number || 'Unknown'}
+                        </div>
+                        <div class="data-item">
+                            <strong>Main CPU Version</strong>
+                            ${data.firmware.main_cpu_version || 'Unknown'}
+                        </div>
+                        <div class="data-item">
+                            <strong>Slave1 CPU Version</strong>
+                            ${data.firmware.slave1_cpu_version || 'Unknown'}
+                        </div>
+                        <div class="data-item">
+                            <strong>Slave2 CPU Version</strong>
+                            ${data.firmware.slave2_cpu_version || 'Unknown'}
+                        </div>
+                    </div>
+                `;
+                systemInfoDisplay.innerHTML = systemInfoHTML;
+                
+                // Also update connection status with model info
+                connectionStatus.innerHTML = `<span class="status-online">● Connected</span> | ${data.model.model_name}`;
+            })
+            .catch(error => {
+                showError(systemInfoDisplay, error.message);
+            });
+    }
+    
     // Fetch inverter status
     function fetchStatus() {
         showLoading(statusDisplay);
@@ -34,8 +113,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 return response.json();
             })
             .then(data => {
-                // Update connection status
-                connectionStatus.innerHTML = `<span class="status-online">● Connected</span>`;
+                // Update connection status if not already updated by system info
+                if (!connectionStatus.innerHTML.includes('Connected')) {
+                    connectionStatus.innerHTML = `<span class="status-online">● Connected</span>`;
+                }
                 
                 // Format and display status data
                 let statusHTML = `
@@ -277,6 +358,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Initial data fetch
+    fetchSystemInfo();
     fetchStatus();
     fetchPowerData();
     fetchBatteryStatus();
@@ -289,4 +371,5 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(fetchBatteryStatus, 15000); // Every 15 seconds
     setInterval(fetchEnergyStats, 60000); // Every minute
     setInterval(fetchErrorLogs, 60000); // Every minute
+    setInterval(fetchSystemInfo, 300000); // Every 5 minutes (model info doesn't change often)
 });

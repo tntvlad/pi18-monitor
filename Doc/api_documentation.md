@@ -43,7 +43,22 @@
   }
   ```
 
-## 1.4 Get Rated Information ✅ Complete
+## 1.4 Get Machine Model ✅ Complete
+- Legacy Command: GMN
+- HTTP Method: GET
+- Endpoint: /api/v1/inverter/info/model
+- Raw Command: ^P006GMN<CRC><cr>
+- Raw Response: ^D005AA<CRC><cr>
+- Response:
+  ```json
+  {
+    "model_code": "02",
+    "model_name": "INFINISOLAR V II",
+    "timestamp": "2025-09-03T11:57:52.396Z"
+  }
+  ```
+
+## 1.5 Get Rated Information ✅ Complete
 - Legacy Command: PIRI
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/info/ratings
@@ -379,6 +394,7 @@
   {
     "date": "2024-08-31",
     "energy_wh": 10000,
+    "energy_kwh": 10.0,
     "unit": "Wh"
   }
   ```
@@ -630,4 +646,3 @@
   }
   ```
 - Note: This is a legacy endpoint. Use /api/v1/inverter/time/current instead.
-

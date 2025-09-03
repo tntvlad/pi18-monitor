@@ -48,6 +48,15 @@ def get_firmware_version():
             return jsonify(firmware_data)
     return jsonify({'error': 'Failed to get firmware version'}), 500
 
+@api_bp.route('/api/v1/inverter/info/model')
+def get_machine_model():
+    """Get inverter machine model"""
+    monitor = get_monitor()
+    model_info = monitor.get_machine_model()
+    if 'error' not in model_info:
+        return jsonify(model_info)
+    return jsonify({'error': 'Failed to get machine model'}), 500
+
 @api_bp.route('/api/v1/inverter/info/ratings')
 def get_ratings():
     """Get inverter rated information"""
@@ -345,29 +354,10 @@ def get_fault_status():
 def get_inverter_time():
     """Get current time from inverter"""
     monitor = get_monitor()
-    result, error = monitor.send_p18_command('T')
+    time_data = monitor.get_current_time()
     
-    if result:
-        # Format: ^D017YYYYMMDDHHMMSS
-        match = re.search(r'^D\d{3}(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})', result)
-        if match:
-            year = match.group(1)
-            month = match.group(2)
-            day = match.group(3)
-            hour = match.group(4)
-            minute = match.group(5)
-            second = match.group(6)
-            
-            return jsonify({
-                "datetime": f"{year}-{month}-{day}T{hour}:{minute}:{second}",
-                "year": int(year),
-                "month": int(month),
-                "day": int(day),
-                "hour": int(hour),
-                "minute": int(minute),
-                "second": int(second)
-            })
-    
+    if 'error' not in time_data:
+        return jsonify(time_data)
     return jsonify({'error': 'Failed to get inverter time'}), 500
 
 @api_bp.route('/api/v1/inverter/time/current', methods=['PUT'])
@@ -385,49 +375,13 @@ def set_inverter_time():
         except ValueError:
             return jsonify({'error': 'Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)'}), 400
         
-        # Format time string for command (yymmddhhffss)
-        time_str = dt.strftime("%y%m%d%H%M%S")
+        # Use the monitor's set_time method
+        monitor = get_monitor()
+        result = monitor.set_time(dt)
         
-        # This is a special command that starts with S not P
-        # We need to handle it differently
-        try:
-            # The set time command needs special handling because it starts with S not P
-            cmd = f"^S018DAT{time_str}\r"
-            monitor = get_monitor()
-            
-            # Send directly without using send_p18_command since this is an S command not P command
-            if not monitor.ser or not monitor.ser.is_open:
-                if not monitor.connect():
-                    return jsonify({'error': 'Could not connect to inverter'}), 500
-            
-            monitor.ser.reset_input_buffer()
-            monitor.ser.reset_output_buffer()
-            monitor.ser.write(cmd.encode('ascii'))
-            monitor.ser.flush()
-            
-            # Read response
-            response = ""
-            while True:
-                char = monitor.ser.read(1)
-                if not char:
-                    break
-                response += char.decode('ascii', errors='ignore')
-                if response.endswith('\r'):
-                    break
-                if len(response) > 100:
-                    break
-            
-            if response:
-                if response.startswith('^1'):
-                    return jsonify({
-                        "status": "success",
-                        "datetime": dt_str
-                    })
-                else:
-                    return jsonify({'error': f'Command refused: {response}'}), 400
-            return jsonify({'error': 'No response from inverter'}), 504
-        except Exception as e:
-            return jsonify({'error': f'Error setting time: {str(e)}'}), 500
+        if 'error' not in result:
+            return jsonify(result)
+        return jsonify({'error': result['error']}), 500
         
     except Exception as e:
         return jsonify({'error': f'Error setting time: {str(e)}'}), 500
@@ -436,65 +390,21 @@ def set_inverter_time():
 def get_charge_schedule():
     """Get AC charge time bucket"""
     monitor = get_monitor()
-    result, error = monitor.send_p18_command('ACCT')
+    schedule_data = monitor.get_ac_charge_schedule()
     
-    if result:
-        # This is a placeholder - adjust based on actual response format
-        try:
-            match = re.search(r'^D\d{3}(\d{2})(\d{2})(\d{2})(\d{2})(\d)', result)
-            if match:
-                start_hour = match.group(1)
-                start_minute = match.group(2)
-                end_hour = match.group(3)
-                end_minute = match.group(4)
-                enabled = match.group(5) == '1'
-                
-                return jsonify({
-                    "start_time": f"{start_hour}:{start_minute}",
-                    "end_time": f"{end_hour}:{end_minute}",
-                    "enabled": enabled
-                })
-        except Exception as e:
-            return jsonify({'error': f'Error parsing charge schedule: {str(e)}'}), 500
-    
-    # Default values if command fails
-    return jsonify({
-        "start_time": "00:00",
-        "end_time": "23:59",
-        "enabled": True
-    })
+    if 'error' not in schedule_data:
+        return jsonify(schedule_data)
+    return jsonify({'error': 'Failed to get charge schedule'}), 500
 
 @api_bp.route('/api/v1/inverter/time/load-schedule')
 def get_load_schedule():
     """Get AC load time bucket"""
     monitor = get_monitor()
-    result, error = monitor.send_p18_command('ACLT')
+    schedule_data = monitor.get_ac_load_schedule()
     
-    if result:
-        # This is a placeholder - adjust based on actual response format
-        try:
-            match = re.search(r'^D\d{3}(\d{2})(\d{2})(\d{2})(\d{2})(\d)', result)
-            if match:
-                start_hour = match.group(1)
-                start_minute = match.group(2)
-                end_hour = match.group(3)
-                end_minute = match.group(4)
-                enabled = match.group(5) == '1'
-                
-                return jsonify({
-                    "start_time": f"{start_hour}:{start_minute}",
-                    "end_time": f"{end_hour}:{end_minute}",
-                    "enabled": enabled
-                })
-        except Exception as e:
-            return jsonify({'error': f'Error parsing load schedule: {str(e)}'}), 500
-    
-    # Default values if command fails
-    return jsonify({
-        "start_time": "00:00",
-        "end_time": "23:59",
-        "enabled": True
-    })
+    if 'error' not in schedule_data:
+        return jsonify(schedule_data)
+    return jsonify({'error': 'Failed to get load schedule'}), 500
 
 # =========================================================================
 # Energy Statistics Endpoints (/api/v1/inverter/energy)
@@ -525,6 +435,7 @@ def get_total_energy():
                 energy_kwh = energy_wh / 1000
                 
                 return jsonify({
+                    "total_energy_wh": energy_wh,
                     "total_energy_kwh": energy_kwh,
                     "unit": "kWh"
                 })
@@ -551,7 +462,7 @@ def get_yearly_energy(year):
         
         # Parse yearly energy
         # Format: ^D011NNNNNNNN<CRC><cr> where NNNNNNNN is the energy in Wh
-        match = re.search(r'D011(\d+)', result)
+        match = re.search(r'D\d{3}(\d+)', result)
         if match:
             try:
                 energy_wh = int(match.group(1))
@@ -559,6 +470,7 @@ def get_yearly_energy(year):
                 energy_kwh = energy_wh / 1000
                 
                 return jsonify({
+                    "energy_wh": energy_wh,
                     "energy_kwh": energy_kwh,
                     "unit": "kWh",
                     "year": year
@@ -585,13 +497,16 @@ def get_monthly_energy(year, month):
         result = re.sub(r'[^a-zA-Z0-9]', '', result)
         
         # Parse monthly energy
-        # Format: ^D011NNNNNNNN<CRC><cr> where NNNNNNNN is the energy in kWh
-        match = re.search(r'D011(\d+)', result)
+        # Format: ^D011NNNNNNNN<CRC><cr> where NNNNNNNN is the energy in Wh (not kWh as previously assumed)
+        match = re.search(r'D\d{3}(\d+)', result)
         if match:
             try:
-                energy_kwh = int(match.group(1))
+                energy_wh = int(match.group(1))
+                # Convert from Wh to kWh with decimal precision
+                energy_kwh = energy_wh / 1000
                 
                 return jsonify({
+                    "energy_wh": energy_wh,
                     "energy_kwh": energy_kwh,
                     "unit": "kWh",
                     "year": year,
@@ -631,14 +546,14 @@ def get_daily_energy(date):
             if match:
                 try:
                     energy_wh = int(match.group(1))
-                    # Convert to kWh for consistency with the total energy endpoint
+                    # Convert to kWh for consistency
                     energy_kwh = energy_wh / 1000
                     
                     return jsonify({
                         "date": date,
                         "energy_wh": energy_wh,
                         "energy_kwh": energy_kwh,
-                        "unit": "Wh"
+                        "unit": "kWh"
                     })
                 except ValueError:
                     return jsonify({'error': f'Invalid energy value format: {match.group(1)}'}), 500
@@ -895,5 +810,24 @@ def set_time_legacy():
     if len(timestr) != 12:
         return jsonify({'error': 'Invalid time format'}), 400
     
-    # Redirect to the new endpoint implementation
-    return set_inverter_time()
+    # Convert the legacy format to ISO format
+    try:
+        year = int('20' + timestr[0:2])  # Assuming 20xx years
+        month = int(timestr[2:4])
+        day = int(timestr[4:6])
+        hour = int(timestr[6:8])
+        minute = int(timestr[8:10])
+        second = int(timestr[10:12])
+        
+        dt = datetime(year, month, day, hour, minute, second)
+        
+        # Use the monitor's set_time method
+        monitor = get_monitor()
+        result = monitor.set_time(dt)
+        
+        if 'error' not in result:
+            return jsonify(result)
+        return jsonify({'error': result['error']}), 500
+        
+    except Exception as e:
+        return jsonify({'error': f'Error setting time: {str(e)}'}), 500

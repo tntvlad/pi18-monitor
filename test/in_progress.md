@@ -1,3 +1,5 @@
+# In Progress Features
+
 1. System Information (/api/v1/inverter/info) ✅ Complete
 
 ## 1.1 Get Protocol ID ✅ Complete
@@ -37,7 +39,20 @@
     "slave2_cpu_version": "00001"
   }
 
-## 1.4 Get Rated Information ✅ Complete
+## 1.4 Get Machine Model ✅ Complete
+- Legacy Command: GMN
+- HTTP Method: GET
+- Endpoint: /api/v1/inverter/info/model
+- Raw Command: ^P006GMN<CRC><cr>
+- Raw Response: ^D005AA<CRC><cr>
+- Response:
+  {
+    "model_code": "02",
+    "model_name": "INFINISOLAR V II",
+    "timestamp": "2025-09-03T11:57:52.396Z"
+  }
+
+## 1.5 Get Rated Information ✅ Complete
 - Legacy Command: PIRI
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/info/ratings
@@ -171,13 +186,14 @@
     }
   }
 
-3. Time Management (/api/v1/inverter/time)
+3. Time Management (/api/v1/inverter/time) ✅ Complete
 
-## 3.1 Get Current Time 🔘 In Progress 
+## 3.1 Get Current Time ✅ Complete
 - Legacy Command: T
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/time/current
 - Raw Command: ^P004T<CRC><cr>
+- Raw Response: ^D017YYYYMMDDHHMMSS<CRC><cr>
 - Response:
   {
     "datetime": "2024-08-31T18:30:45",
@@ -186,10 +202,11 @@
     "day": 31,
     "hour": 18,
     "minute": 30,
-    "second": 45
+    "second": 45,
+    "timestamp": "2025-09-03T12:21:43.279Z"
   }
 
-## 3.2 Set Date Time 🔘 In Progress
+## 3.2 Set Date Time ✅ Complete
 - Legacy Command: DAT
 - HTTP Method: PUT
 - Endpoint: /api/v1/inverter/time/current
@@ -201,32 +218,37 @@
 - Response:
   {
     "status": "success",
-    "datetime": "2024-08-31T18:30:45"
+    "datetime": "2024-08-31T18:30:45",
+    "timestamp": "2025-09-03T12:21:43.279Z"
   }
 
-## 3.3 Get AC Charge Time Bucket 🔘 In Progress
+## 3.3 Get AC Charge Time Bucket ✅ Complete
 - Legacy Command: ACCT
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/time/charge-schedule
+- Raw Response: ^D008HHMMHHMME<CRC><cr>
 - Response:
   {
     "start_time": "00:00",
     "end_time": "23:59",
-    "enabled": true
+    "enabled": true,
+    "timestamp": "2025-09-03T12:21:43.279Z"
   }
 
-## 3.4 Get AC Load Time Bucket 🔘 In Progress
+## 3.4 Get AC Load Time Bucket ✅ Complete
 - Legacy Command: ACLT
 - HTTP Method: GET
 - Endpoint: /api/v1/inverter/time/load-schedule
+- Raw Response: ^D008HHMMHHMME<CRC><cr>
 - Response:
   {
     "start_time": "00:00",
     "end_time": "23:59",
-    "enabled": true
+    "enabled": true,
+    "timestamp": "2025-09-03T12:21:43.279Z"
   }
 
-4. Energy Statistics (/api/v1/inverter/energy)
+4. Energy Statistics (/api/v1/inverter/energy) ✅ Complete
 
 ## 4.1 Get Total Generated Energy ✅ Complete
 - Legacy Command: ET
@@ -246,9 +268,9 @@
 - Raw Command: ^P009EYyyyy<CRC><cr>
 - Response:
   {
-    "year": 2024,
     "energy_kwh": 3650,
-    "unit": "kWh"
+    "unit": "kWh",
+    "year": 2024
   }
 
 ## 4.3 Get Monthly Energy ✅ Complete
@@ -258,10 +280,10 @@
 - Raw Command: ^P011EMyyyymm<cr>
 - Response:
   {
-    "year": 2024,
-    "month": 8,
     "energy_kwh": 300,
-    "unit": "kWh"
+    "unit": "kWh",
+    "year": 2024,
+    "month": 8
   }
 
 ## 4.4 Get Daily Energy ✅ Complete
@@ -273,6 +295,7 @@
   {
     "date": "2024-08-31",
     "energy_wh": 10000,
+    "energy_kwh": 10.0,
     "unit": "Wh"
   }
 
@@ -287,7 +310,7 @@
     "message": "All energy data cleared"
   }
 
-5. Settings Management (/api/v1/inverter/settings)
+5. Settings Management (/api/v1/inverter/settings) 🔘 In Progress
 
 ## 5.1 Get Default Parameters 🔘 In Progress
 - Legacy Command: DI
@@ -356,7 +379,7 @@
     "solar_power_priority": "Load-Battery-Utility"
   }
 
-6. Commands (/api/v1/inverter/commands)
+6. Commands (/api/v1/inverter/commands) 🔘 In Progress
 
 ## 6.1 Enable/Disable Load Output 🔘 In Progress
 - Legacy Command: LON
@@ -388,7 +411,7 @@
     "fault_record": true
   }
 
-7. Parallel System (/api/v1/inverter/parallel)
+7. Parallel System (/api/v1/inverter/parallel) 🔘 In Progress
 
 ## 7.1 Get Parallel System Info 🔘 In Progress
 - Legacy Command: PRI
