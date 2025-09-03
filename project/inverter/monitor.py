@@ -24,6 +24,10 @@ class P18InverterMonitor:
         self.lock = threading.Lock()
         self.last_values = {}
         self.error_log = []
+        self.connection_attempts = 0
+        self.max_connection_attempts = 3
+        self.last_connection_time = 0
+        self.connection_cooldown = 2  # seconds
         
         # Status mappings
         self.working_modes = {
@@ -59,27 +63,72 @@ class P18InverterMonitor:
             '0': 'Load-Battery-Utility', '1': 'Battery-Load-Utility'
         }
         
+        # Try to connect on initialization
+        self.connect()
+        
     def connect(self):
-        """Establish connection to the inverter"""
-        try:
-            if self.ser:
-                self.ser.close()
-            self.ser = serial.Serial(port=self.port, **self.serial_config)
+        """Establish connection to the inverter with retry logic"""
+        # Check if we've tried too recently
+        current_time = time.time()
+        if (current_time - self.last_connection_time) < self.connection_cooldown:
+            time.sleep(0.5)  # Small delay to avoid hammering the port
+            
+        self.last_connection_time = current_time
+        
+        # Don't try to reconnect if we're already connected
+        if self.ser and self.ser.is_open:
             self.connected = True
             return True
-        except Exception as e:
-            self.error_log.append({
-                'time': datetime.now().isoformat(),
-                'code': 'E-CONN',
-                'error': f"Connection error: {str(e)}"
-            })
-            self.connected = False
-            return False
+            
+        # Try alternative ports if main port fails repeatedly
+        ports_to_try = [self.port]
+        
+        # If we've failed multiple times, try other ports
+        if self.connection_attempts >= 2:
+            if self.port == "/dev/ttyUSB0":
+                ports_to_try.append("/dev/ttyUSB1")
+            elif self.port == "/dev/ttyUSB1":
+                ports_to_try.append("/dev/ttyUSB0")
+                
+        for port in ports_to_try:
+            try:
+                # Close existing connection if any
+                if self.ser:
+                    try:
+                        self.ser.close()
+                    except:
+                        pass
+                
+                # Open new connection
+                self.ser = serial.Serial(port=port, **self.serial_config)
+                self.connected = True
+                self.connection_attempts = 0  # Reset counter on success
+                
+                # If we connected to an alternative port, update our port
+                if port != self.port:
+                    print(f"Connected to alternative port: {port}")
+                    self.port = port
+                    
+                return True
+            except Exception as e:
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'E-CONN',
+                    'error': f"Connection error on {port}: {str(e)}"
+                })
+                
+        # Increment connection attempt counter
+        self.connection_attempts += 1
+        self.connected = False
+        return False
             
     def disconnect(self):
         """Close the serial connection"""
         if self.ser and self.ser.is_open:
-            self.ser.close()
+            try:
+                self.ser.close()
+            except:
+                pass
         self.connected = False
         
     def calculate_crc16_modbus(self, data):
@@ -105,50 +154,154 @@ class P18InverterMonitor:
         return complete_frame
         
     def send_p18_command(self, command):
-        """Send command to P18 inverter and get response"""
+        """Send command to P18 inverter and get response with retry logic"""
+        # Try to connect if not connected
         if not self.connected:
             if not self.connect():
                 return None, "Not connected to inverter"
                 
+        # Use a lock to prevent multiple threads from accessing the serial port simultaneously
         with self.lock:
-            try:
-                # Format and send command
-                frame = self.build_p18_command(command)
-                self.ser.reset_input_buffer()
-                self.ser.reset_output_buffer()
-                
-                start_time = time.time()
-                self.ser.write(frame)
-                self.ser.flush()
-                
-                # Read response
-                response = ""
-                while True:
-                    char = self.ser.read(1)
-                    if not char:
-                        break
-                    response += char.decode('ascii', errors='ignore')
-                    if response.endswith('\r'):
-                        break
-                    if len(response) > 1000:
-                        break
-                
-                if not response:
-                    return None, "No response from inverter"
+            max_retries = 2
+            for attempt in range(max_retries + 1):
+                try:
+                    # Format and send command
+                    frame = self.build_p18_command(command)
+                    self.ser.reset_input_buffer()
+                    self.ser.reset_output_buffer()
                     
-                return response.strip(), None
+                    self.ser.write(frame)
+                    self.ser.flush()
+                    
+                    # Read response
+                    response = ""
+                    start_time = time.time()
+                    while (time.time() - start_time) < self.serial_config['timeout']:
+                        char = self.ser.read(1)
+                        if not char:
+                            if response:  # If we have some response but hit a timeout
+                                break
+                            continue
+                        response += char.decode('ascii', errors='ignore')
+                        if response.endswith('\r'):
+                            break
+                        if len(response) > 1000:
+                            break
+                    
+                    if not response and attempt < max_retries:
+                        # Try reconnecting
+                        self.disconnect()
+                        if not self.connect():
+                            continue  # Skip to next retry
+                    elif response:
+                        return response.strip(), None
+                        
+                except Exception as e:
+                    self.error_log.append({
+                        'time': datetime.now().isoformat(),
+                        'code': 'E-CMD',
+                        'error': f"Command error: {str(e)}"
+                    })
+                    
+                    if attempt < max_retries:
+                        # Try reconnecting
+                        self.disconnect()
+                        if not self.connect():
+                            continue  # Skip to next retry
+                    else:
+                        return None, str(e)
+            
+            # If we get here, all retries failed
+            return None, "No response from inverter after multiple attempts"
+
+    def validate_p18_response(self, response):
+        """
+        Validate P18 protocol response format and length
+        
+        Args:
+            response (str): The response string from the inverter
+            
+        Returns:
+            tuple: (is_valid, error_message)
+        """
+        if not response:
+            return False, "Empty response"
+            
+        if not response.startswith('^D'):
+            return False, f"Invalid response format: {response[:10]}... (does not start with ^D)"
+            
+        # Extract the length field (3 digits after ^D)
+        match = re.search(r'^\^D(\d{3})', response)
+        if not match:
+            return False, f"Invalid response format: {response[:10]}... (missing length field)"
+            
+        try:
+            # Get the declared length from the response
+            declared_length = int(match.group(1))
+            
+            # Calculate the expected total length
+            # Total response length = 5 (^Dnnn) + declared_length
+            expected_total_length = 5 + declared_length
+            
+            # Check if the actual response length matches the expected length
+            if len(response) != expected_total_length:
+                return False, f"Length mismatch: declared={declared_length}, actual={len(response)-5}, total={len(response)}"
                 
-            except Exception as e:
-                self.error_log.append({
-                    'time': datetime.now().isoformat(),
-                    'code': 'E-CMD',
-                    'error': f"Command error: {str(e)}"
-                })
-                return None, str(e)
+            return True, None
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
+
+    def safe_extract_payload(self, response):
+        """
+        Safely extract the payload from a P18 protocol response
+        
+        Args:
+            response (str): The response string from the inverter
+            
+        Returns:
+            str or None: The payload if valid, None if invalid
+        """
+        is_valid, error = self.validate_p18_response(response)
+        if not is_valid:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-PROTO',
+                'error': f"Protocol error: {error}"
+            })
+            return None
+            
+        try:
+            # Extract the length field (3 digits after ^D)
+            match = re.search(r'^\^D(\d{3})', response)
+            if not match:
+                return None
                 
+            declared_length = int(match.group(1))
+            
+            # Calculate the data length (declared_length - 3)
+            # The 3 is for CRC (2 bytes) + CR (1 byte)
+            data_length = declared_length - 3
+            
+            # Extract the payload
+            payload = response[5:5+data_length]
+            
+            return payload
+        except Exception as e:
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-EXTRACT',
+                'error': f"Payload extraction error: {str(e)}"
+            })
+            return None
+        
     def parse_protocol_id(self, response):
         """Parse protocol ID from response"""
         try:
+            payload = self.safe_extract_payload(response)
+            if payload:
+                return payload
+                
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # From the screenshot, the response format is ^D00518<CRC><cr>
                 # Extract the numeric part after ^D
@@ -171,13 +324,18 @@ class P18InverterMonitor:
     def parse_general_status(self, response):
         """Parse GS command response"""
         try:
-            if not response or not response.startswith('^D'):
+            payload = self.safe_extract_payload(response)
+            if not payload:
                 return None
-            
-            payload = response[5:-3]  # Remove header and CRC
+                
             fields = payload.split(',')
             
             if len(fields) < 28:
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'E-PARSE',
+                    'error': f"General status parse error: insufficient fields ({len(fields)})"
+                })
                 return None
             
             return {
@@ -207,6 +365,12 @@ class P18InverterMonitor:
     def parse_mode_response(self, response):
         """Parse MOD command response to extract working mode"""
         try:
+            payload = self.safe_extract_payload(response)
+            if payload and payload.startswith('MOD,'):
+                mode_code = payload.split(',')[1]
+                return self.working_modes.get(mode_code, 'Unknown')
+                
+            # Fallback to old method if safe_extract_payload fails or format is different
             # Check for the standard format first (^D005MOD,XX)
             if response and response.startswith('^D'):
                 # Try to extract the mode code using regex
@@ -243,6 +407,27 @@ class P18InverterMonitor:
     def parse_serial_number(self, response):
         """Parse ID command response to extract serial number"""
         try:
+            payload = self.safe_extract_payload(response)
+            if payload:
+                # If the payload contains the length and serial number directly
+                if len(payload) >= 2 and payload[0:2].isdigit():
+                    length = int(payload[0:2])
+                    serial_number = payload[2:2+length]
+                    
+                    if serial_number and len(serial_number) == length:
+                        return {
+                            "serial_number": serial_number,
+                            "serial_length": length
+                        }
+                
+                # Fallback: try to use the entire payload as the serial number
+                if payload:
+                    return {
+                        "serial_number": payload,
+                        "serial_length": len(payload)
+                    }
+                    
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # Format from screenshot: ^D025149613221210129700000V
                 # Where 14 is the length of the serial number
@@ -282,6 +467,18 @@ class P18InverterMonitor:
     def parse_firmware_version(self, response):
         """Parse VFW command response to extract firmware versions"""
         try:
+            payload = self.safe_extract_payload(response)
+            if payload:
+                versions = payload.split(',')
+                
+                if len(versions) >= 3:
+                    return {
+                        "main_cpu_version": versions[0],
+                        "slave1_cpu_version": versions[1],
+                        "slave2_cpu_version": versions[2]
+                    }
+                    
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # Extract the firmware versions
                 payload = response[5:-3]  # Remove header and CRC
@@ -305,13 +502,18 @@ class P18InverterMonitor:
     def parse_rated_info(self, response):
         """Parse PIRI command response to extract rated information"""
         try:
-            if not response or not response.startswith('^D'):
+            payload = self.safe_extract_payload(response)
+            if not payload:
                 return None
         
-            payload = response[5:-3]  # Remove header and CRC
             fields = payload.split(',')
         
             if len(fields) < 21:
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'E-PARSE',
+                    'error': f"Rated info parse error: insufficient fields ({len(fields)})"
+                })
                 return None
         
             # Based on the screenshots, many values need to be divided by 10
@@ -373,6 +575,35 @@ class P18InverterMonitor:
     def parse_machine_model(self, response):
         """Parse GMN command response to extract machine model information"""
         try:
+            payload = self.safe_extract_payload(response)
+            if payload and len(payload) >= 2:
+                model_code = payload[:2]  # Extract the 2-character model code
+                
+                # Define model mapping based on the image provided
+                model_mapping = {
+                    "00": "INFINISOLAR V",
+                    "01": "INFINISOAR V LV",
+                    "02": "INFINISOLAR V II",
+                    "03": "INFINISOLAR V II 15KW(3 phase)",
+                    "04": "INFINISOLAR V III",
+                    "05": "INFINISOLAR V II LV",
+                    "06": "INFINISOLAR V II WP",
+                    "07": "EASUN IGRID SV IV",
+                    "08": "INFINISOLAR V II TWIN",
+                    "09": "INFINISOLAR V III TWIN",
+                    "11": "INFINISOLAR V II WP TWIN",
+                    "12": "INFINISOLAR V IV TWIN"
+                }
+                
+                model_name = model_mapping.get(model_code, "Unknown model")
+                
+                return {
+                    "model_code": model_code,
+                    "model_name": model_name,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # Format from image: ^D005AA<CRC><cr>
                 # Where AA is the model code
@@ -427,6 +658,30 @@ class P18InverterMonitor:
         Example: ^D01720160214201314<CRC><cr> means 2016-02-14 20:13:14
         """
         try:
+            payload = self.safe_extract_payload(response)
+            if payload and len(payload) >= 14:
+                year = payload[0:4]
+                month = payload[4:6]
+                day = payload[6:8]
+                hour = payload[8:10]
+                minute = payload[10:12]
+                second = payload[12:14]
+                
+                # Format as ISO datetime string
+                datetime_str = f"{year}-{month}-{day}T{hour}:{minute}:{second}"
+                
+                return {
+                    "datetime": datetime_str,
+                    "year": int(year),
+                    "month": int(month),
+                    "day": int(day),
+                    "hour": int(hour),
+                    "minute": int(minute),
+                    "second": int(second),
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # Extract the time string (YYYYMMDDHHMMSS)
                 # The response should be like ^D017YYYYMMDDHHMMSS<CRC><cr>
@@ -564,6 +819,22 @@ class P18InverterMonitor:
         - E is enabled flag (1=enabled, 0=disabled)
         """
         try:
+            payload = self.safe_extract_payload(response)
+            if payload and len(payload) >= 9:
+                start_hour = payload[0:2]
+                start_minute = payload[2:4]
+                end_hour = payload[4:6]
+                end_minute = payload[6:8]
+                enabled = payload[8] == '1'
+                
+                return {
+                    "start_time": f"{start_hour}:{start_minute}",
+                    "end_time": f"{end_hour}:{end_minute}",
+                    "enabled": enabled,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+            # Fallback to old method if safe_extract_payload fails
             if response and response.startswith('^D'):
                 # Extract the schedule data
                 match = re.search(r'\^D\d{3}(\d{2})(\d{2})(\d{2})(\d{2})(\d)', response)

@@ -75,6 +75,30 @@ else
     echo "config.ini already exists, keeping existing configuration"
 fi
 
+# Create WSGI entry point for Gunicorn
+echo "Creating WSGI entry point for Gunicorn..."
+cat > wsgi.py << EOF
+"""WSGI entry point for Gunicorn"""
+import sys
+import os
+
+# Add the project's parent directory to the Python path
+# This ensures that both 'project' and 'project.inverter' can be imported
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import the Flask app
+from project.app import create_app
+
+# Create the application instance
+application = create_app()
+
+# For compatibility with some WSGI servers
+app = application
+
+if __name__ == "__main__":
+    application.run()
+EOF
+
 # Create startup script with options for different servers
 echo "Creating startup scripts..."
 cat > start.sh << EOF
@@ -93,7 +117,7 @@ case \$SERVER in
     ;;
   gunicorn)
     echo "Starting with Gunicorn production server..."
-    gunicorn -b 0.0.0.0:5000 -w 4 'project.app:create_app()'
+    gunicorn -b 0.0.0.0:5000 -w 4 wsgi:app
     ;;
   *)
     echo "Unknown server: \$SERVER"
@@ -116,45 +140,100 @@ python -m flask run --host=0.0.0.0 --port=5000
 EOF
 chmod +x dev.sh
 
-# Create service file for systemd
-echo "Creating systemd service file..."
-cat > p18-inverter-api.service << EOF
+# Ask user if they want to install the systemd service
+echo ""
+echo "Would you like to install the P18 Inverter API as a system service? (y/n)"
+read -r install_service
+
+if [[ "$install_service" =~ ^[Yy]$ ]]; then
+    # Get the current user and directory for the service file
+    CURRENT_USER=$(whoami)
+    CURRENT_DIR=$(pwd)
+    
+    # Ask user which server to use
+    echo ""
+    echo "Which server would you like to use?"
+    echo "1) Gunicorn (recommended for production)"
+    echo "2) Flask built-in server (simpler, better for development)"
+    read -r server_choice
+    
+    # Create the service file based on the user's choice
+    echo "Creating systemd service file..."
+    
+    if [[ "$server_choice" == "2" ]]; then
+        # Flask built-in server
+        sudo bash -c "cat > /etc/systemd/system/p18-inverter-api.service << EOF
 [Unit]
 Description=P18 Inverter API Service
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
-WorkingDirectory=$(pwd)
-ExecStart=$(pwd)/venv/bin/gunicorn -b 0.0.0.0:5000 -w 4 'project.app:create_app()'
-Environment="FLASK_APP=project/app.py"
-Environment="FLASK_ENV=production"
+User=$CURRENT_USER
+WorkingDirectory=$CURRENT_DIR
+ExecStart=$CURRENT_DIR/venv/bin/python -m flask run --host=0.0.0.0 --port=5000
+Environment=\"FLASK_APP=project/app.py\"
+Environment=\"FLASK_ENV=production\"
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF"
+        echo "Service configured to use Flask's built-in server."
+    else
+        # Default to Gunicorn
+        sudo bash -c "cat > /etc/systemd/system/p18-inverter-api.service << EOF
+[Unit]
+Description=P18 Inverter API Service
+After=network.target
 
-echo "To install as a system service, run:"
-echo "sudo cp p18-inverter-api.service /etc/systemd/system/"
-echo "sudo systemctl daemon-reload"
-echo "sudo systemctl enable p18-inverter-api.service"
-echo "sudo systemctl start p18-inverter-api.service"
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$CURRENT_DIR
+ExecStart=$CURRENT_DIR/venv/bin/gunicorn --workers=2 --bind=0.0.0.0:5000 wsgi:app
+Environment=\"FLASK_APP=project/app.py\"
+Environment=\"FLASK_ENV=production\"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF"
+        echo "Service configured to use Gunicorn."
+    fi
+    
+    # Reload systemd, enable and start the service
+    echo "Enabling and starting the service..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable p18-inverter-api.service
+    sudo systemctl start p18-inverter-api.service
+    
+    # Check service status
+    echo "Service status:"
+    sudo systemctl status p18-inverter-api.service
+    
+    echo ""
+    echo "The P18 Inverter API service has been installed and started."
+    echo "You can manage it with the following commands:"
+    echo "  sudo systemctl start p18-inverter-api.service"
+    echo "  sudo systemctl stop p18-inverter-api.service"
+    echo "  sudo systemctl restart p18-inverter-api.service"
+    echo "  sudo systemctl status p18-inverter-api.service"
+    echo ""
+    echo "To view logs:"
+    echo "  sudo journalctl -u p18-inverter-api.service -f"
+else
+    echo ""
+    echo "Service installation skipped."
+    echo "You can manually start the application using:"
+    echo "  ./start.sh gunicorn    # For production with Gunicorn"
+    echo "  ./start.sh flask       # For production with Flask"
+    echo "  ./dev.sh               # For development with Flask"
+fi
 
 echo "========================================================="
 echo "Installation complete!"
-echo ""
-echo "To start the application in production mode with Flask:"
-echo "  ./start.sh flask"
-echo ""
-echo "To start the application in production mode with Gunicorn (recommended):"
-echo "  ./start.sh gunicorn"
-echo ""
-echo "To start the application in development mode:"
-echo "  ./dev.sh"
-echo ""
 echo "The API will be available at: http://localhost:5000"
-echo "API documentation available at: http://localhost:5000/docs"
 echo "========================================================="

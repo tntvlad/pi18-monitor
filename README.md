@@ -130,6 +130,36 @@ sudo systemctl start p18-inverter-api.service
    http://localhost:5000
    ```
 
+## Uninstallation
+
+To remove the P18 Inverter Monitor from your system, an uninstall script is provided:
+
+1. Make the uninstall script executable:
+   ```bash
+   chmod +x uninstall.sh
+   ```
+
+2. Run the uninstall script:
+   ```bash
+   ./uninstall.sh
+   ```
+   
+   For full functionality (service removal), you may need to run it with sudo:
+   ```bash
+   sudo ./uninstall.sh
+   ```
+
+The uninstall script will:
+- Stop and disable the systemd service if it's running
+- Remove the service file from the system
+- Provide options to remove:
+  - The virtual environment
+  - Configuration files
+  - Generated scripts (start.sh, dev.sh, wsgi.py)
+  - The entire project directory (with confirmation)
+
+The script is interactive and will ask for confirmation before removing each component, ensuring you have full control over the uninstallation process.
+
 ## Usage
 
 ### Web Interface

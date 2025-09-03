@@ -4,8 +4,9 @@ from flask_cors import CORS
 import os
 import json
 import serial.tools.list_ports
-from inverter.monitor import P18InverterMonitor
-from inverter.api.routes import api_bp
+from project.inverter.monitor import P18InverterMonitor
+from project.inverter.api.routes import api_bp
+from project.inverter.utils.port_detector import InverterPortDetector
 
 def create_app(config=None):
     """Create and configure the Flask application"""
@@ -25,7 +26,8 @@ def create_app(config=None):
         INVERTER_TIMEOUT=int(os.environ.get('INVERTER_TIMEOUT', 1)),
         DASHBOARD_REFRESH_INTERVAL=int(os.environ.get('DASHBOARD_REFRESH_INTERVAL', 30)),
         LOG_LEVEL=os.environ.get('LOG_LEVEL', 'INFO'),
-        CONFIG_FILE=os.environ.get('CONFIG_FILE', 'config.json')
+        CONFIG_FILE=os.environ.get('CONFIG_FILE', 'config.json'),
+        INVERTER_SERIAL=os.environ.get('INVERTER_SERIAL', None)
     )
     
     # Load configuration from file if exists
@@ -40,6 +42,15 @@ def create_app(config=None):
     # Override with provided config
     if config:
         app.config.update(config)
+    
+    # Initialize port detector
+    app.port_detector = InverterPortDetector()
+    
+    # If INVERTER_SERIAL is set, try to find the port for that specific inverter
+    if app.config['INVERTER_SERIAL']:
+        preferred_port = app.port_detector.get_preferred_port(app.config['INVERTER_SERIAL'])
+        if preferred_port:
+            app.config['INVERTER_PORT'] = preferred_port
     
     # Initialize inverter monitor
     app.monitor = P18InverterMonitor(port=app.config['INVERTER_PORT'])
@@ -66,6 +77,7 @@ def create_app(config=None):
                 timeout = int(request.form.get('timeout', 1))
                 refresh_interval = int(request.form.get('refresh_interval', 30))
                 log_level = request.form.get('log_level', 'INFO')
+                inverter_serial = request.form.get('inverter_serial')
                 
                 # Update configuration
                 app.config.update(
@@ -73,7 +85,8 @@ def create_app(config=None):
                     INVERTER_BAUDRATE=baudrate,
                     INVERTER_TIMEOUT=timeout,
                     DASHBOARD_REFRESH_INTERVAL=refresh_interval,
-                    LOG_LEVEL=log_level
+                    LOG_LEVEL=log_level,
+                    INVERTER_SERIAL=inverter_serial
                 )
                 
                 # Save configuration to file
@@ -82,11 +95,45 @@ def create_app(config=None):
                     'INVERTER_BAUDRATE': baudrate,
                     'INVERTER_TIMEOUT': timeout,
                     'DASHBOARD_REFRESH_INTERVAL': refresh_interval,
-                    'LOG_LEVEL': log_level
+                    'LOG_LEVEL': log_level,
+                    'INVERTER_SERIAL': inverter_serial
                 }
                 
                 with open(app.config['CONFIG_FILE'], 'w') as f:
                     json.dump(config_to_save, f, indent=4)
+                
+                # If inverter serial is provided, save the port mapping
+                if inverter_serial and port:
+                    # Test connection to get inverter info
+                    test_monitor = P18InverterMonitor(port=port)
+                    if test_monitor.connect():
+                        # Get serial number and protocol ID
+                        result, _ = test_monitor.send_p18_command('ID')
+                        serial_data = None
+                        if result:
+                            serial_data = test_monitor.parse_serial_number(result)
+                        
+                        # Get protocol ID
+                        result, _ = test_monitor.send_p18_command('PI')
+                        protocol_id = None
+                        if result:
+                            protocol_id = test_monitor.parse_protocol_id(result)
+                        
+                        # Get firmware version
+                        firmware_version = "Unknown"
+                        result, _ = test_monitor.send_p18_command('VFW')
+                        if result and ',' in result:
+                            firmware_version = result.split(',')[0].replace('^D', '').strip()
+                        
+                        # Save mapping
+                        app.port_detector.save_mapping(port, {
+                            "connected": True,
+                            "protocol_id": protocol_id,
+                            "serial_number": inverter_serial,
+                            "firmware_version": firmware_version
+                        })
+                        
+                        test_monitor.disconnect()
                 
                 # Reinitialize the monitor with new settings
                 if hasattr(app, 'monitor'):
@@ -121,11 +168,19 @@ def create_app(config=None):
             if protocol_result:
                 protocol_id = test_monitor.parse_protocol_id(protocol_result)
             
+            # Try to get serial number
+            serial_number = None
+            serial_result, error = test_monitor.send_p18_command('ID')
+            if serial_result:
+                serial_data = test_monitor.parse_serial_number(serial_result)
+                if serial_data:
+                    serial_number = serial_data.get('serial_number')
+            
             # Try to get firmware version
             firmware_version = "Unknown"
             firmware_result, error = test_monitor.send_p18_command('VFW')
-            if firmware_result and 'D' in firmware_result:
-                firmware_version = firmware_result.split(',')[0] if ',' in firmware_result else firmware_result
+            if firmware_result and ',' in firmware_result:
+                firmware_version = firmware_result.split(',')[0].replace('^D', '').strip()
             
             # Close the test connection
             test_monitor.disconnect()
@@ -133,6 +188,7 @@ def create_app(config=None):
             return jsonify({
                 'success': True, 
                 'protocol_id': protocol_id,
+                'serial_number': serial_number,
                 'firmware_version': firmware_version
             })
             
@@ -152,6 +208,16 @@ def create_app(config=None):
                     'hwid': port.hwid
                 })
             return jsonify({'ports': ports})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    # API endpoint to scan for inverters
+    @app.route('/api/v1/system/scan-inverters')
+    def scan_inverters():
+        """Scan for inverters on available ports"""
+        try:
+            inverters = app.port_detector.detect_inverters()
+            return jsonify({'inverters': inverters})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     

@@ -29,11 +29,27 @@
                 </div>
                 {% endif %}
                 
+                <div class="scan-section">
+                    <h3>Scan for Inverters</h3>
+                    <p>Click the button below to scan all available ports for connected inverters.</p>
+                    <button id="scanInvertersBtn" class="btn secondary">Scan for Inverters</button>
+                    <div id="scanResults" class="scan-results"></div>
+                </div>
+                
                 <form action="{{ url_for('setup') }}" method="POST" class="setup-form">
                     <div class="form-group">
                         <label for="port">Serial Port</label>
-                        <input type="text" id="port" name="port" value="{{ config.INVERTER_PORT }}" required>
-                        <small>Example: /dev/ttyUSB0, COM3, etc.</small>
+                        <select id="port" name="port" required>
+                            <option value="">Select a port...</option>
+                            <!-- Ports will be loaded dynamically -->
+                        </select>
+                        <button type="button" id="refreshPortsBtn" class="btn-small">Refresh</button>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="inverter_serial">Inverter Serial Number</label>
+                        <input type="text" id="inverter_serial" name="inverter_serial" value="{{ config.INVERTER_SERIAL or '' }}">
+                        <small>Optional: Used to identify this specific inverter</small>
                     </div>
                     
                     <div class="form-group">
@@ -71,6 +87,7 @@
                     
                     <div class="form-actions">
                         <button type="submit" class="btn primary">Save Settings</button>
+                        <button type="button" id="testConnectionBtn" class="btn secondary">Test Connection</button>
                         <a href="{{ url_for('index') }}" class="btn secondary">Back to Dashboard</a>
                     </div>
                 </form>
@@ -79,16 +96,7 @@
             <section class="dashboard-card">
                 <h2>Connection Test</h2>
                 <div class="connection-test">
-                    <p>Test your connection to the inverter:</p>
-                    <button id="test-connection" class="btn secondary">Test Connection</button>
-                    <div id="test-result" class="test-result"></div>
-                </div>
-            </section>
-            
-            <section class="dashboard-card">
-                <h2>Available Serial Ports</h2>
-                <div id="serial-ports" class="serial-ports">
-                    <p>Loading available ports...</p>
+                    <div id="connectionResult" class="connection-result"></div>
                 </div>
             </section>
         </div>
@@ -99,6 +107,182 @@
         <p><small>Version 1.0.0</small></p>
     </footer>
     
-    <script src="{{ url_for('static', filename='js/setup.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Fetch available ports on page load
+            fetchAvailablePorts();
+            
+            // Add event listener for refresh button
+            document.getElementById('refreshPortsBtn').addEventListener('click', fetchAvailablePorts);
+            
+            // Add event listener for test connection button
+            document.getElementById('testConnectionBtn').addEventListener('click', testConnection);
+            
+            // Add event listener for scan inverters button
+            document.getElementById('scanInvertersBtn').addEventListener('click', scanInverters);
+        });
+        
+        // Fetch available serial ports
+        function fetchAvailablePorts() {
+            const portSelect = document.getElementById('port');
+            const currentPort = portSelect.value;
+            
+            // Show loading state
+            portSelect.innerHTML = '<option value="">Loading ports...</option>';
+            
+            fetch('/api/v1/system/ports')
+                .then(response => response.json())
+                .then(data => {
+                    // Clear the select
+                    portSelect.innerHTML = '<option value="">Select a port...</option>';
+                    
+                    // Add ports to the select
+                    if (data.ports && data.ports.length > 0) {
+                        data.ports.forEach(port => {
+                            const option = document.createElement('option');
+                            option.value = port.device;
+                            option.textContent = `${port.device} - ${port.description}`;
+                            
+                            // Select the current port if it exists
+                            if (port.device === '{{ config.INVERTER_PORT }}' || port.device === currentPort) {
+                                option.selected = true;
+                            }
+                            
+                            portSelect.appendChild(option);
+                        });
+                    } else {
+                        // No ports found
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'No ports available';
+                        portSelect.appendChild(option);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching ports:', error);
+                    portSelect.innerHTML = '<option value="">Error loading ports</option>';
+                });
+        }
+        
+        // Test connection to the inverter
+        function testConnection() {
+            const port = document.getElementById('port').value;
+            const resultDiv = document.getElementById('connectionResult');
+            
+            if (!port) {
+                resultDiv.innerHTML = '<div class="alert error">Please select a port first</div>';
+                return;
+            }
+            
+            // Show loading state
+            resultDiv.innerHTML = '<div class="alert info">Testing connection...</div>';
+            
+            fetch('/api/v1/inverter/test-connection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ port: port })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let resultHTML = '<div class="alert success">';
+                        resultHTML += '<h3>Connection Successful!</h3>';
+                        resultHTML += '<ul>';
+                        
+                        if (data.protocol_id) {
+                            resultHTML += `<li>Protocol ID: ${data.protocol_id}</li>`;
+                        }
+                        
+                        if (data.serial_number) {
+                            resultHTML += `<li>Serial Number: ${data.serial_number}</li>`;
+                            // Auto-fill the serial number field if empty
+                            const serialField = document.getElementById('inverter_serial');
+                            if (!serialField.value) {
+                                serialField.value = data.serial_number;
+                            }
+                        }
+                        
+                        if (data.firmware_version) {
+                            resultHTML += `<li>Firmware: ${data.firmware_version}</li>`;
+                        }
+                        
+                        resultHTML += '</ul></div>';
+                        resultDiv.innerHTML = resultHTML;
+                    } else {
+                        resultDiv.innerHTML = `<div class="alert error">Connection failed: ${data.error || 'Unknown error'}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error testing connection:', error);
+                    resultDiv.innerHTML = '<div class="alert error">Error testing connection</div>';
+                });
+        }
+        
+        // Scan for inverters on all available ports
+        function scanInverters() {
+            const scanResultsDiv = document.getElementById('scanResults');
+            
+            // Show loading state
+            scanResultsDiv.innerHTML = '<div class="alert info">Scanning for inverters...</div>';
+            
+            fetch('/api/v1/system/scan-inverters')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.inverters && Object.keys(data.inverters).length > 0) {
+                        let resultHTML = '<div class="inverter-list">';
+                        resultHTML += '<h4>Detected Inverters:</h4>';
+                        resultHTML += '<table>';
+                        resultHTML += '<thead><tr><th>Port</th><th>Serial Number</th><th>Protocol ID</th><th>Firmware</th><th>Action</th></tr></thead>';
+                        resultHTML += '<tbody>';
+                        
+                        for (const [port, info] of Object.entries(data.inverters)) {
+                            resultHTML += '<tr>';
+                            resultHTML += `<td>${port}</td>`;
+                            resultHTML += `<td>${info.serial_number || 'Unknown'}</td>`;
+                            resultHTML += `<td>${info.protocol_id || 'Unknown'}</td>`;
+                            resultHTML += `<td>${info.firmware_version || 'Unknown'}</td>`;
+                            resultHTML += `<td><button class="btn-small select-port" data-port="${port}" data-serial="${info.serial_number || ''}">Select</button></td>`;
+                            resultHTML += '</tr>';
+                        }
+                        
+                        resultHTML += '</tbody></table></div>';
+                        scanResultsDiv.innerHTML = resultHTML;
+                        
+                        // Add event listeners to the select buttons
+                        document.querySelectorAll('.select-port').forEach(button => {
+                            button.addEventListener('click', function() {
+                                const port = this.getAttribute('data-port');
+                                const serial = this.getAttribute('data-serial');
+                                
+                                // Set the port in the select dropdown
+                                const portSelect = document.getElementById('port');
+                                for (let i = 0; i < portSelect.options.length; i++) {
+                                    if (portSelect.options[i].value === port) {
+                                        portSelect.selectedIndex = i;
+                                        break;
+                                    }
+                                }
+                                
+                                // Set the serial number if available
+                                if (serial) {
+                                    document.getElementById('inverter_serial').value = serial;
+                                }
+                                
+                                // Scroll to the form
+                                document.querySelector('.form-group').scrollIntoView({ behavior: 'smooth' });
+                            });
+                        });
+                    } else {
+                        scanResultsDiv.innerHTML = '<div class="alert warning">No inverters detected. Make sure your adapters are connected properly.</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error scanning for inverters:', error);
+                    scanResultsDiv.innerHTML = '<div class="alert error">Error scanning for inverters</div>';
+                });
+        }
+    </script>
 </body>
 </html>
