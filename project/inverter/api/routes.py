@@ -61,12 +61,56 @@ def get_machine_model():
 def get_ratings():
     """Get inverter rated information"""
     monitor = get_monitor()
-    result, error = monitor.send_p18_command('PIRI')
-    if result:
-        ratings_data = monitor.parse_rated_info(result)
-        if ratings_data:
-            return jsonify(ratings_data)
-    return jsonify({'error': 'Failed to get rated information'}), 500
+    ratings_data, error = monitor.get_rated_info()
+    if ratings_data:
+        return jsonify(ratings_data)
+    return jsonify({'error': 'Failed to get rated information', 'details': error}), 500
+
+@api_bp.route('/api/debug/piri')
+def debug_piri():
+    """Debug PIRI command response"""
+    monitor = get_monitor()
+    
+    try:
+        # Test raw PIRI command
+        raw_result, raw_error = monitor.send_p18_command('PIRI')
+        
+        # Test the get_rated_info method
+        parsed_data, parsed_error = monitor.get_rated_info()
+        
+        debug_info = {
+            "raw_command": {
+                "response": raw_result,
+                "error": raw_error,
+                "length": len(raw_result) if raw_result else 0
+            },
+            "parsed_method": {
+                "data": parsed_data,
+                "error": parsed_error,
+                "success": parsed_data is not None
+            },
+            "recent_errors": monitor.error_log[-5:] if monitor.error_log else [],
+            "connection_status": monitor.connected,
+            "port": monitor.port
+        }
+        
+        # If we have raw response, try to extract payload manually
+        if raw_result:
+            payload = monitor.safe_extract_payload(raw_result)
+            debug_info["payload_extraction"] = {
+                "payload": payload,
+                "values": payload.split() if payload else None,
+                "values_count": len(payload.split()) if payload else 0
+            }
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({
+            "error": f"Debug error: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
 
 # =========================================================================
 # Real-time Data Endpoints (/api/v1/inverter/data)

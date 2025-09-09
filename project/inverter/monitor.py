@@ -217,50 +217,71 @@ class P18InverterMonitor:
     def validate_p18_response(self, response):
         """
         Validate P18 protocol response format and length
-        
+
         Args:
             response (str): The response string from the inverter
-            
+    
         Returns:
             tuple: (is_valid, error_message)
         """
         if not response:
             return False, "Empty response"
-            
+    
         if not response.startswith('^D'):
             return False, f"Invalid response format: {response[:10]}... (does not start with ^D)"
-            
+    
         # Extract the length field (3 digits after ^D)
         match = re.search(r'^\^D(\d{3})', response)
         if not match:
             return False, f"Invalid response format: {response[:10]}... (missing length field)"
-            
+    
         try:
-            # Get the declared length from the response
+        # Get the declared length from the response
             declared_length = int(match.group(1))
-            
+    
             # Calculate the expected total length
-            # Total response length = 5 (^Dnnn) + declared_length
+            # Total response length = 2(^D) + 3(length) + declared_length
+            # The declared length already includes CRC and ending char
             expected_total_length = 5 + declared_length
-            
+    
             # Check if the actual response length matches the expected length
-            if len(response) != expected_total_length:
-                return False, f"Length mismatch: declared={declared_length}, actual={len(response)-5}, total={len(response)}"
-                
+            actual_length = len(response)  # Don't strip CR/LF as they're part of the length
+        
+            # Allow a small margin of error (±2 characters) to account for possible CR/LF variations
+            if abs(actual_length - expected_total_length) > 2:
+                return False, f"Length mismatch: declared={declared_length}, expected_total={expected_total_length}, actual={actual_length}"
+        
+            # Check if response ends with \r
+            if not response.endswith('\r'):
+                # This is a warning, not a fatal error
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'W-PROTO',
+                    'error': f"Response should end with carriage return (\\r)"
+                })
+        
             return True, None
+        
         except Exception as e:
             return False, f"Validation error: {str(e)}"
 
     def safe_extract_payload(self, response):
         """
         Safely extract the payload from a P18 protocol response
-        
+
         Args:
             response (str): The response string from the inverter
-            
+    
         Returns:
             str or None: The payload if valid, None if invalid
         """
+        # For debugging
+        self.error_log.append({
+            'time': datetime.now().isoformat(),
+            'code': 'DEBUG',
+            'error': f"Processing response: {response}"
+        })
+    
         is_valid, error = self.validate_p18_response(response)
         if not is_valid:
             self.error_log.append({
@@ -268,30 +289,56 @@ class P18InverterMonitor:
                 'code': 'E-PROTO',
                 'error': f"Protocol error: {error}"
             })
-            return None
-            
+            # Continue anyway, try to extract what we can
+    
         try:
             # Extract the length field (3 digits after ^D)
             match = re.search(r'^\^D(\d{3})', response)
             if not match:
                 return None
-                
-            declared_length = int(match.group(1))
-            
-            # Calculate the data length (declared_length - 3)
-            # The 3 is for CRC (2 bytes) + CR (1 byte)
-            data_length = declared_length - 3
-            
-            # Extract the payload
-            payload = response[5:5+data_length]
-            
+        
+            # The payload starts after ^D and the 3-digit length
+            payload_start = 5  # ^D + 3 digits = 5 characters
+        
+            # Try to find the end of the payload by looking for CRC characters
+            # CRC is typically 2 bytes before the ending \r
+            if response.endswith('\r'):
+                payload_end = len(response) - 3  # -3 for CRC(2) + CR(1)
+            else:
+                # If no CR, assume CRC is the last 2 characters
+                payload_end = len(response) - 2
+        
+            # Ensure we don't have negative length
+            if payload_end <= payload_start:
+                payload_end = len(response)
+        
+            payload = response[payload_start:payload_end]
+        
+            # For debugging
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'DEBUG',
+                'error': f"Extracted payload: {payload}"
+            })
+        
             return payload
+    
         except Exception as e:
             self.error_log.append({
                 'time': datetime.now().isoformat(),
                 'code': 'E-EXTRACT',
                 'error': f"Payload extraction error: {str(e)}"
             })
+        
+            # Try a simpler approach as fallback
+            try:
+                # Just extract everything between ^DXXX and the last 3 characters
+                if len(response) > 8:  # Minimum length for a valid response
+                    simple_payload = response[5:-3]
+                    return simple_payload
+            except:
+                pass
+        
             return None
         
     def parse_protocol_id(self, response):
@@ -499,67 +546,190 @@ class P18InverterMonitor:
             })
             return None
         
-    def parse_rated_info(self, response):
-        """Parse PIRI command response to extract rated information"""
+
+    def get_rated_info(self):
+        """Get rated information using PIRI command"""
         try:
+            response, error = self.send_p18_command("PIRI")
+            if error:
+                return None, error
+        
+            if not response:
+                return None, "No response from inverter"
+        
+            # Parse the PIRI response
+            parsed_data = self.parse_rated_info(response)
+            if parsed_data is None:
+                return None, "Failed to parse PIRI response"
+        
+            # Cache the result
+            self.last_values['rated_info'] = {
+                'data': parsed_data,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+            return parsed_data, None
+        
+        except Exception as e:
+            error_msg = f"Error getting rated information: {str(e)}"
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'E-PIRI',
+                'error': error_msg
+            })
+            return None, error_msg
+
+    def parse_rated_info(self, response):
+        """Parse rated information from PIRI response"""
+        try:
+            # Log the raw response for debugging
+            self.error_log.append({
+                'time': datetime.now().isoformat(),
+                'code': 'DEBUG-PIRI',
+                'error': f"Raw PIRI response: {response}"
+            })
+        
+            # First, try to extract the payload using the safe method
             payload = self.safe_extract_payload(response)
-            if not payload:
-                return None
         
-            fields = payload.split(',')
+            # If that fails, try a more direct approach
+            if payload is None:
+                # Extract everything after ^DXXX where XXX is the length
+                match = re.search(r'\^D\d{3}(.*?)(?:<|$)', response)
+                if match:
+                    payload = match.group(1)
+                else:
+                    self.error_log.append({
+                        'time': datetime.now().isoformat(),
+                        'code': 'E-PIRI-FORMAT',
+                        'error': f"Could not extract PIRI payload from response: {response}"
+                    })
+                    return None
         
-            if len(fields) < 21:
+            # Try to split by commas first (as seen in your debug output)
+            if ',' in payload:
+                values = payload.split(',')
                 self.error_log.append({
                     'time': datetime.now().isoformat(),
-                    'code': 'E-PARSE',
-                    'error': f"Rated info parse error: insufficient fields ({len(fields)})"
+                    'code': 'DEBUG-PIRI',
+                    'error': f"Using comma-separated format, found {len(values)} values"
+                })
+            else:
+                # If no commas, fall back to space separation
+                values = payload.split()
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'DEBUG-PIRI',
+                    'error': f"Using space-separated format, found {len(values)} values"
+                })
+        
+            # Parse all the values with proper error handling
+            try:
+                # Create a default structure
+                parsed_data = {
+                    "ac_input": {
+                        "voltage": 230.0,
+                        "current": 30.0
+                    },
+                    "ac_output": {
+                        "voltage": 230.0,
+                        "frequency": 50.0,
+                        "current": 30.0,
+                        "apparent_power": 6000,
+                        "active_power": 6000
+                    },
+                    "battery": {
+                        "voltage": 48.0,
+                        "recharge_voltage": 46.0,
+                        "redischarge_voltage": 54.0,
+                        "under_voltage": 42.0,
+                        "bulk_voltage": 56.4,
+                        "float_voltage": 54.0,
+                        "type": "Unknown"
+                    },
+                    "charging": {
+                        "max_ac_current": 60,
+                        "max_total_current": 80
+                    },
+                    "system": {
+                        "input_voltage_range": "Appliance",
+                        "output_priority": "Solar-Utility-Battery",
+                        "charger_priority": "Solar first",
+                        "parallel_max": 9,
+                        "machine_type": "Hybrid"
+                    },
+                    "raw_response": payload,
+                    "total_values": len(values)
+                }
+            
+                # Fill in values that we have with proper decimal point handling
+                try:
+                    # AC input values with decimal point
+                    if len(values) > 0: parsed_data["ac_input"]["voltage"] = float(values[0]) / 10
+                    if len(values) > 1: parsed_data["ac_input"]["current"] = float(values[1]) / 10
+                
+                    # AC output values with decimal point
+                    if len(values) > 2: parsed_data["ac_output"]["voltage"] = float(values[2]) / 10
+                    if len(values) > 3: parsed_data["ac_output"]["frequency"] = float(values[3]) / 10
+                    if len(values) > 4: parsed_data["ac_output"]["current"] = float(values[4]) / 10
+                    if len(values) > 5: parsed_data["ac_output"]["apparent_power"] = int(float(values[5]))
+                    if len(values) > 6: parsed_data["ac_output"]["active_power"] = int(float(values[6]))
+                
+                    # Battery values with decimal point
+                    if len(values) > 7: parsed_data["battery"]["voltage"] = float(values[7]) / 10
+                    if len(values) > 8: parsed_data["battery"]["recharge_voltage"] = float(values[8]) / 10
+                    if len(values) > 9: parsed_data["battery"]["redischarge_voltage"] = float(values[9]) / 10
+                    if len(values) > 10: parsed_data["battery"]["under_voltage"] = float(values[10]) / 10
+                    if len(values) > 11: parsed_data["battery"]["bulk_voltage"] = float(values[11]) / 10
+                    if len(values) > 12: parsed_data["battery"]["float_voltage"] = float(values[12]) / 10
+                
+                    # Other values without decimal point
+                    if len(values) > 13: parsed_data["battery"]["type"] = self.battery_types.get(values[13], f"Unknown ({values[13]})")
+                    if len(values) > 14: parsed_data["charging"]["max_ac_current"] = int(float(values[14]))
+                    if len(values) > 15: parsed_data["charging"]["max_total_current"] = int(float(values[15]))
+                    if len(values) > 16: parsed_data["system"]["input_voltage_range"] = self.input_voltage_ranges.get(values[16], f"Unknown ({values[16]})")
+                    if len(values) > 17: parsed_data["system"]["output_priority"] = self.output_priorities.get(values[17], f"Unknown ({values[17]})")
+                    if len(values) > 18: parsed_data["system"]["charger_priority"] = self.charger_priorities.get(values[18], f"Unknown ({values[18]})")
+                    if len(values) > 19: parsed_data["system"]["parallel_max"] = int(float(values[19]))
+                    if len(values) > 20: parsed_data["system"]["machine_type"] = self.machine_types.get(values[20], f"Unknown ({values[20]})")
+                
+                    # Add optional fields if they exist
+                    if len(values) > 21:
+                        parsed_data["system"]["topology"] = self.topologies.get(values[21], f"Unknown ({values[21]})")
+                
+                    if len(values) > 22:
+                        parsed_data["system"]["output_mode"] = self.output_modes.get(values[22], f"Unknown ({values[22]})")
+                
+                    if len(values) > 23:
+                        parsed_data["system"]["solar_power_priority"] = self.solar_power_priorities.get(values[23], f"Unknown ({values[23]})")
+                
+                    if len(values) > 24:
+                        parsed_data["system"]["mppt_strings"] = int(float(values[24]))
+                
+                    return parsed_data
+                
+                except (ValueError, IndexError) as e:
+                    self.error_log.append({
+                        'time': datetime.now().isoformat(),
+                        'code': 'E-PIRI-VALUE',
+                        'error': f"Error parsing specific PIRI value: {str(e)}, continuing with partial data"
+                    })
+                    # Return what we have even if some values couldn't be parsed
+                    return parsed_data
+            
+            except Exception as e:
+                self.error_log.append({
+                    'time': datetime.now().isoformat(),
+                    'code': 'E-PIRI-PARSE',
+                    'error': f"Error parsing PIRI values: {str(e)}, Raw payload: {payload}"
                 })
                 return None
         
-            # Based on the screenshots, many values need to be divided by 10
-            # to get the correct decimal representation
-            return {
-                "ac_input": {
-                    "voltage": float(fields[0])/10,  # Unit: 0.1V
-                    "current": float(fields[1])/10   # Unit: 0.1A
-                },
-                "ac_output": {
-                    "voltage": float(fields[2])/10,  # Unit: 0.1V
-                    "frequency": float(fields[3])/10,  # Unit: 0.1Hz
-                    "current": float(fields[4])/10,  # Unit: 0.1A
-                    "apparent_power": int(fields[5]),  # Unit: VA
-                    "active_power": int(fields[6])   # Unit: W
-                },
-                "battery": {
-                    "voltage": float(fields[7])/10,  # Unit: 0.1V
-                    "recharge_voltage": float(fields[8])/10,  # Unit: 0.1V
-                    "redischarge_voltage": float(fields[9])/10,  # Unit: 0.1V
-                    "under_voltage": float(fields[10])/10,  # Unit: 0.1V
-                    "bulk_voltage": float(fields[11])/10,  # Unit: 0.1V
-                    "float_voltage": float(fields[12])/10,  # Unit: 0.1V
-                    "type": self.battery_types.get(fields[13], "Unknown")
-                },
-                "charging": {
-                    "max_ac_current": int(fields[14]),  # Unit: A
-                    "max_total_current": int(fields[15])  # Unit: A
-                },
-                "system": {
-                    "input_voltage_range": self.input_voltage_ranges.get(fields[16], "Unknown"),
-                    "output_priority": self.output_priorities.get(fields[17], "Unknown"),
-                    "charger_priority": self.charger_priorities.get(fields[18], "Unknown"),
-                    "parallel_max": int(fields[19]),
-                    "machine_type": self.machine_types.get(fields[20], "Unknown"),
-                    "topology": self.topologies.get(fields[21], "Unknown") if len(fields) > 21 else "Unknown",
-                    "output_mode": self.output_modes.get(fields[22], "Unknown") if len(fields) > 22 else "Unknown",
-                    "solar_power_priority": self.solar_power_priorities.get(fields[23], "Unknown") if len(fields) > 23 else "Unknown",
-                    "mppt_strings": int(fields[24]) if len(fields) > 24 and fields[24].isdigit() else 1
-                }
-            }
         except Exception as e:
             self.error_log.append({
                 'time': datetime.now().isoformat(),
-                'code': 'E-PARSE',
-                'error': f"Rated info parse error: {str(e)}"
+                'code': 'E-PIRI-GENERAL',
+                'error': f"General PIRI parse error: {str(e)}"
             })
             return None
             

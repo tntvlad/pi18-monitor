@@ -2,7 +2,7 @@
 
 A web-based monitoring and control interface for P18 inverters.
 
-![P18 Inverter Monitor](https://via.placeholder.com/800x400?text=P18+Inverter+Monitor)
+P18 Inverter Monitor
 
 ## Overview
 

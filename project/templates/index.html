@@ -177,16 +177,16 @@
                             <div class="info-value" id="machine-model">Loading...</div>
                         </div>
                         <div class="info-item">
-                            <div class="info-label">Model Code</div>
-                            <div class="info-value" id="model-code">Loading...</div>
-                        </div>
-                        <div class="info-item">
                             <div class="info-label">Serial Number</div>
                             <div class="info-value" id="serial-number">Loading...</div>
                         </div>
                         <div class="info-item">
                             <div class="info-label">Main CPU Version</div>
                             <div class="info-value" id="main-cpu-version">Loading...</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">Output Mode</div>
+                            <div class="info-value" id="output-mode">Loading...</div>
                         </div>
                     </div>
                 </div>
@@ -350,16 +350,13 @@
                 .then(data => {
                     if (data.model_name) {
                         document.getElementById('machine-model').textContent = data.model_name;
-                        document.getElementById('model-code').textContent = data.model_code || 'N/A';
                     } else {
                         document.getElementById('machine-model').textContent = 'Error';
-                        document.getElementById('model-code').textContent = 'Error';
                     }
                 })
                 .catch(error => {
                     console.error('Error loading model info:', error);
                     document.getElementById('machine-model').textContent = 'Error';
-                    document.getElementById('model-code').textContent = 'Error';
                 });
             
             // Get serial number
@@ -390,6 +387,36 @@
                 .catch(error => {
                     console.error('Error loading firmware version:', error);
                     document.getElementById('main-cpu-version').textContent = 'Error';
+                });
+                
+            // Use the direct API command to get output mode since the structured endpoint is failing
+            fetch('/api/command/PIRI')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.response) {
+                        // Parse the response to extract the output mode
+                        const parts = data.response.split(',');
+                        if (parts.length > 22) {
+                            const outputModeCode = parts[22];
+                            // Map the output mode code to its description
+                            const outputModes = {
+                                '0': 'Single',
+                                '1': 'Parallel',
+                                '2': 'Phase 1 of 3',
+                                '3': 'Phase 2 of 3',
+                                '4': 'Phase 3 of 3'
+                            };
+                            document.getElementById('output-mode').textContent = outputModes[outputModeCode] || 'Unknown';
+                        } else {
+                            document.getElementById('output-mode').textContent = 'Unknown';
+                        }
+                    } else {
+                        document.getElementById('output-mode').textContent = 'Error';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading output mode:', error);
+                    document.getElementById('output-mode').textContent = 'Error';
                 });
         }
         
@@ -542,14 +569,24 @@
         
         function setCurrentTime() {
             const now = new Date();
-            const isoDateTime = now.toISOString();
+            
+            // Format the date in local time without timezone conversion
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            
+            // Create ISO format string but with local time
+            const localIsoDateTime = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
             
             fetch('/api/v1/inverter/time/current', {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ datetime: isoDateTime })
+                body: JSON.stringify({ datetime: localIsoDateTime })
             })
                 .then(response => response.json())
                 .then(data => {
